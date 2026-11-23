@@ -1,42 +1,44 @@
-# Visio CellsU 速查与坐标换算
+[中文文档 (Chinese)](cells-reference.zh-CN.md)
 
-## 一、坐标换算（最容易出错的地方）
+# Visio CellsU Quick Reference and Coordinate Conversion
 
-Visio 内部：**原点在页面左下角，Y 轴向上**，默认单位英寸。
-本 skill 的 `visio_lib` 对外统一为 **左上角原点、Y 向下、mm**，换算只有两行：
+## 1. Coordinate Conversion (Where Mistakes Happen Most)
+
+Inside Visio: **the origin is at the bottom-left corner of the page, Y axis pointing up**, default unit inches.
+This skill's `visio_lib` exposes a uniform convention of **top-left origin, Y downward, mm**; the conversion is just two lines:
 
 ```python
-PinX = x + w / 2.0                    # 水平方向两者一致
-PinY = pageH - ytop - h / 2.0         # 垂直方向要翻转
+PinX = x + w / 2.0                    # Horizontal direction is the same in both
+PinY = pageH - ytop - h / 2.0         # Vertical direction must be flipped
 Width  = w
 Height = h
 ```
 
-直线（`DrawLine`）同理，只换 Y：
+Lines (`DrawLine`) work the same way, flipping only Y:
 
 ```python
 BeginY = pageH - y1
 EndY   = pageH - y2
 ```
 
-**写 Cell 时一定要带单位**，否则 Visio 按英寸解释：
+**Always include a unit when writing a Cell**, otherwise Visio interprets it as inches:
 
 ```python
 s.CellsU("PinX").FormulaU = "25 mm"      # ✓
-s.CellsU("PinX").FormulaU = "25"         # ✗ 会被当成 25 英寸
-s.CellsU("Char.Size").FormulaU = "8.5 pt"   # 字号用 pt
+s.CellsU("PinX").FormulaU = "25"         # ✗ Will be read as 25 inches
+s.CellsU("Char.Size").FormulaU = "8.5 pt"   # Font size in pt
 ```
 
-`CellsU` 取值一律是 **字符串**，布尔用 `"0"` / `"1"`，不要传 Python 的 `True`。
+`CellsU` values are always **strings**; booleans use `"0"` / `"1"` — do not pass Python's `True`.
 
 ---
 
-## 二、PageSheet（页面）
+## 2. PageSheet (Page)
 
-| Cell | 说明 | 示例 |
+| Cell | Notes | Example |
 |---|---|---|
-| `PageWidth` / `PageHeight` | 页面尺寸 | `"152 mm"` |
-| `LeftMargin` / `RightMargin` / `TopMargin` / `BottomMargin` | 页边距，**设为 0** 便于按内容排布 | `"0 mm"` |
+| `PageWidth` / `PageHeight` | Page size | `"152 mm"` |
+| `LeftMargin` / `RightMargin` / `TopMargin` / `BottomMargin` | Page margins; **set to 0** so content can be laid out freely | `"0 mm"` |
 
 ```python
 pg = doc.Pages.Item(1)
@@ -45,104 +47,104 @@ pg.PageSheet.CellsU("PageWidth").FormulaU = "152 mm"
 
 ---
 
-## 三、Shape（图元）
+## 3. Shape
 
-### 几何
-| Cell | 说明 |
+### Geometry
+| Cell | Notes |
 |---|---|
-| `PinX` / `PinY` | 形状**中心**坐标 |
-| `Width` / `Height` | 尺寸 |
-| `BeginX/BeginY/EndX/EndY` | 仅线条类形状（`DrawLine`） |
-| `Rounding` | 圆角半径，`"0 mm"` 直角，`"1.5 mm"` 圆角 |
+| `PinX` / `PinY` | Shape **center** coordinates |
+| `Width` / `Height` | Size |
+| `BeginX/BeginY/EndX/EndY` | Line-type shapes only (`DrawLine`) |
+| `Rounding` | Corner radius, `"0 mm"` square, `"1.5 mm"` rounded |
 
-### 填充
-| Cell | 说明 |
+### Fill
+| Cell | Notes |
 |---|---|
-| `FillPattern` | `0` 无填充，`1` 实心，2~24 为各种纹理 |
-| `FillForegnd` | 填充色，`"RGB(222,235,247)"` |
+| `FillPattern` | `0` no fill, `1` solid, 2–24 various patterns |
+| `FillForegnd` | Fill color, `"RGB(222,235,247)"` |
 
-### 线条
-| Cell | 说明 |
+### Lines
+| Cell | Notes |
 |---|---|
-| `LinePattern` | `0` 无线 `1` 实线 `2` 虚线 `4` 点划线（编号共几十种，见下） |
+| `LinePattern` | `0` no line, `1` solid, `2` dashed, `4` dash-dot (dozens of codes in total, see below) |
 | `LineColor` | `"RGB(0,0,0)"` |
 | `LineWeight` | `"0.75 pt"` |
-| `EndArrow` / `BeginArrow` | 箭头样式编号 |
-| `Shadows` | 一般设 `"0"` 关闭阴影 |
+| `EndArrow` / `BeginArrow` | Arrow style codes |
+| `Shadows` | Usually set to `"0"` to turn shadows off |
 
-### 文字
-| Cell | 说明 |
+### Text
+| Cell | Notes |
 |---|---|
-| `Char.Font` | 字体名，**必须带引号**：`'"微软雅黑"'` |
+| `Char.Font` | Font name, **must be quoted**: `'"微软雅黑"'` |
 | `Char.Color` | `"RGB(38,38,38)"` |
 | `Char.Size` | `"8.5 pt"` |
-| `Para.HorzAlign` | `0` 左 `1` 中 `2` 右 `3` 两端对齐 |
-| `VerticalAlign` | `0` 顶 `1` 中 `2` 底 |
-| `LeftMargin` / `RightMargin` | 文字与框边的水平内边距 |
-| `TopMargin` / `BottomMargin` | 垂直内边距 |
+| `Para.HorzAlign` | `0` left, `1` center, `2` right, `3` justified |
+| `VerticalAlign` | `0` top, `1` middle, `2` bottom |
+| `LeftMargin` / `RightMargin` | Horizontal inner padding between text and box edge |
+| `TopMargin` / `BottomMargin` | Vertical inner padding |
 
-文字内容用属性赋值，不是 Cell：
+Text content is assigned as a property, not a Cell:
 
 ```python
-s.Text = "标题\n说明文字"        # 换行用 \n
+s.Text = "标题\n说明文字"        # Line breaks use \n
 ```
 
-> `Char.Font` 忘了加引号是最常见的静默失败：不报错，但字体不生效。
+> Forgetting the quotes on `Char.Font` is the most common silent failure: no error, but the font doesn't take effect.
 
 ---
 
-## 四、编号取值（以实际渲染为准）
+## 4. Code Values (Trust the Actual Rendering)
 
-Visio 的线型与箭头编号有几十种，各版本略有差异。**可靠做法**：在 Visio 界面里手动设一次，再读回 `CellsU(...).FormulaU` 看编号。
+Visio's line-pattern and arrow codes number in the dozens and vary slightly by version. **Reliable approach**: set it once manually in the Visio UI, then read back `CellsU(...).FormulaU` to see the code.
 
-本 skill 验证过的常用值：
+Common values verified by this skill:
 
-| 用途 | 值 |
+| Use | Value |
 |---|---|
-| 无箭头 | `EndArrow = 0` |
-| 实心三角箭头 | `EndArrow = 4` |
-| 空心箭头 | `EndArrow = 1` |
-| 实线 | `LinePattern = 1` |
-| 虚线 | `LinePattern = 2` |
-| 点划线 | `LinePattern = 4` |
+| No arrow | `EndArrow = 0` |
+| Solid triangular arrow | `EndArrow = 4` |
+| Hollow arrow | `EndArrow = 1` |
+| Solid line | `LinePattern = 1` |
+| Dashed line | `LinePattern = 2` |
+| Dash-dot line | `LinePattern = 4` |
 
 ---
 
-## 五、创建图元的固定套路
+## 5. The Fixed Pattern for Creating Shapes
 
-Visio COM 没有「按矩形创建一个矩形」的直接 API，套路是**先建默认图元再摆位**：
+Visio COM has no direct API for "create a rectangle from a rectangle". The pattern is **create a default shape first, then position it**:
 
 ```python
-s = pg.DrawRectangle(0, 0, 1, 1)     # 先建一个 1x1 的
-s.CellsU("PinX").FormulaU = "..."    # 再改尺寸和位置
+s = pg.DrawRectangle(0, 0, 1, 1)     # First create a 1x1 one
+s.CellsU("PinX").FormulaU = "..."    # Then change size and position
 s.CellsU("PinY").FormulaU = "..."
 s.CellsU("Width").FormulaU  = "60 mm"
 s.CellsU("Height").FormulaU = "20 mm"
 ```
 
-线条用 `pg.DrawLine(0, 0, 1, 1)`，然后改 `BeginX/BeginY/EndX/EndY`。
+Use `pg.DrawLine(0, 0, 1, 1)` for lines, then change `BeginX/BeginY/EndX/EndY`.
 
 ---
 
-## 六、导出与保存
+## 6. Export and Save
 
 ```python
-doc.SaveAs(r"D:\out\图A.vsdx")     # 原生格式，可继续编辑
-pg.Export(r"D:\out\图A.emf")       # 矢量，供 Word/PPT 嵌入
-pg.Export(r"D:\out\图A.png")       # 位图预览
+doc.SaveAs(r"D:\out\图A.vsdx")     # Native format, still editable
+pg.Export(r"D:\out\图A.emf")       # Vector, for embedding in Word/PPT
+pg.Export(r"D:\out\图A.png")       # Bitmap preview
 ```
 
-- `Page.Export` **按内容边界裁剪**（不含页边距），96 DPI —— 所以不用手工裁白边。
-- 扩展名决定格式，由 Visio 的导出滤镜处理。
-- `Export` 只导出当前页；多页文档要对每页分别调用。
+- `Page.Export` **crops to the content bounds** (excluding page margins), 96 DPI — so no manual trimming of white space is needed.
+- The extension determines the format, handled by Visio's export filters.
+- `Export` exports only the current page; for multi-page documents, call it once per page.
 
 ---
 
-## 七、COM 生命周期
+## 7. COM Lifecycle
 
 ```python
 app = win32.Dispatch("Visio.Application")
-app.AlertResponse = 7      # 抑制弹窗（否则可能卡住等待人工点击）
+app.AlertResponse = 7      # Suppress popups (otherwise it may hang waiting for a manual click)
 app.Visible = 0
 doc = app.Documents.Add("")
 ...
@@ -150,4 +152,4 @@ doc.Close()
 app.Quit()
 ```
 
-**务必 `Quit()`**，否则 VISIO.EXE 会残留在后台进程里，多次运行后累积。
+**Always call `Quit()`**, otherwise VISIO.EXE stays behind as a background process and accumulates over repeated runs.

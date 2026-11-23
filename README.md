@@ -2,7 +2,7 @@
 
 [中文文档 (Chinese)](README.zh-CN.md)
 
-Programmatic vector diagram generation and Word embedding for Chinese engineering documents, driven by the local Visio installation via COM.
+Programmatic vector diagram generation and Word embedding for engineering documents, with full CJK / Chinese support, driven by the local Visio installation via COM.
 
 Each figure is exported as `.vsdx` (natively editable), `.emf` (vector for Word / PowerPoint) and `.png` (preview).
 
@@ -27,7 +27,7 @@ Each figure is exported as `.vsdx` (natively editable), `.emf` (vector for Word 
 ## Installation
 
 ```bash
-git clone https://github.com/kkzi/visio-diagram.git
+git clone https://github.com/syrr/visio-diagram.git
 cd visio-diagram
 pip install pywin32 pillow
 ```
@@ -44,16 +44,16 @@ The repo is a standard skill package (`SKILL.md` + `scripts/` + `references/`). 
 
 ```bash
 # WorkBuddy (user-level)
-git clone https://github.com/kkzi/visio-diagram.git ~/.workbuddy-ai/skills/visio-diagram
+git clone https://github.com/syrr/visio-diagram.git ~/.workbuddy-ai/skills/visio-diagram
 
 # Claude Code
-git clone https://github.com/kkzi/visio-diagram.git ~/.claude/skills/visio-diagram
+git clone https://github.com/syrr/visio-diagram.git ~/.claude/skills/visio-diagram
 ```
 
 Example prompt that triggers the skill:
 
 ```
-用 Visio 画一张三泳道的系统架构图，按文档栏宽 1:1 出图，自检后嵌到方案 docx 里
+Use Visio to draw a three-swimlane system architecture diagram, sized 1:1 to the document column width, run the self-check, then embed it in the proposal docx
 ```
 
 The agent then runs the workflow itself: environment check → column-width measurement → drawing script → overflow self-check → alignment audit → export and Word embedding. The host machine needs the same requirements as above; the agent only needs shell access.
@@ -66,24 +66,24 @@ sys.path.insert(0, "scripts")
 from visio_lib import VDraw
 
 with VDraw(150, 108, theme="tech-cn") as d:      # canvas in mm, top-left origin, Y down
-    d.lane(0, 0, 150, 74, "处理链路")
-    d.step_box(6, 12, 42, 26, "① 环节一", "说明文字")
+    d.lane(0, 0, 150, 74, "Processing chain")
+    d.step_box(6, 12, 42, 26, "① Step 1", "Description")
     d.h_arrow(48, 25, 60)
     d.check()                                     # text overflow self-check
-    d.export_all("out/图N1")                      # writes .vsdx / .emf / .png
+    d.export_all("out/Fig N1")                    # writes .vsdx / .emf / .png
 ```
 
 Embed a figure into Word by placeholder:
 
 ```bash
-python scripts/word_insert.py 方案.docx --placeholder "{{FIG:N2}}" --image 图N2.emf
+python scripts/word_insert.py proposal.docx --placeholder "{{FIG:N2}}" --image "Fig N2.emf"
 ```
 
 Audit connector alignment (supports a whitelist for intentional offsets):
 
 ```bash
-python scripts/audit_align.py 图表素材/*.vsdx
-python scripts/audit_align.py --add 图表素材/图N8….vsdx    # whitelist reported offsets
+python scripts/audit_align.py figures/*.vsdx
+python scripts/audit_align.py --add "figures/Fig N8….vsdx"    # whitelist reported offsets
 ```
 
 Run the regression suite after any engine change:

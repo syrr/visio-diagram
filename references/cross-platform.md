@@ -1,74 +1,76 @@
-# XML 后端：不依赖 Visio 的跨平台出图
+[中文文档 (Chinese)](cross-platform.zh-CN.md)
 
-`scripts/xml_backend/` 直接生成 Visio 页面 XML 并打包为 vsdx，不需要 Windows、Visio 或 pywin32，Linux / macOS / Windows 都能运行。产物仍是原生可编辑的 Visio 对象：连接点、端点粘附（`PAR(PNT())` 公式 + `<Connects>`）、连线自带文本都按 Visio 规范写入，拖动形状时连线端点跟随。
+# XML Backend: Cross-Platform Diagram Output Without Visio
 
-## 与 COM 后端的分工
-| | COM（visio_lib.py） | XML 后端 |
+`scripts/xml_backend/` generates Visio page XML directly and packages it as vsdx, with no need for Windows, Visio, or pywin32 — it runs on Linux, macOS, and Windows alike. The output is still natively editable Visio objects: connection points, endpoint gluing (`PAR(PNT())` formulas + `<Connects>`), and connector-owned text are all written per the Visio spec, so connector endpoints follow when you drag a shape.
+
+## How It Divides Work with the COM Backend
+| | COM (visio_lib.py) | XML backend |
 |---|---|---|
-| 运行环境 | Windows + 桌面版 Visio | 任意平台，仅需 Python 3.8+ 和 Pillow |
-| 速度与确定性 | 较慢，受 Visio 版本影响 | 秒级，同样输入同样输出，可做差异比对 |
-| Word 预览 | 矢量 EMF | 高 DPI PNG（在 Visio 里双击编辑后自动重新生成） |
-| 公式缓存值 | Visio 当场重算 | 脚本自己算好写入 |
-| 适合 | 需要 EMF、或在原图上局部修改 | 批量生成、整页重绘、CI、AI Agent 沙箱 |
+| Runtime environment | Windows + desktop Visio | Any platform, only Python 3.8+ and Pillow needed |
+| Speed and determinism | Slower, affected by Visio version | Seconds, same input gives same output, diffable |
+| Word preview | Vector EMF | High-DPI PNG (automatically regenerated after double-click editing in Visio) |
+| Formula cached values | Recalculated by Visio on the spot | Computed and written by the script itself |
+| Best for | Needing EMF, or making local edits to an existing diagram | Batch generation, whole-page redraws, CI, AI agent sandboxes |
 
-两者可以组合：用 XML 后端生成，在装有 Visio 的 Windows 上用 `visio_finish.py` 做验证与收尾（重算、导出 EMF、Visio 另存），这一步失败不影响交付。
+The two can be combined: generate with the XML backend, then use `visio_finish.py` on a Windows machine with Visio for verification and finishing (recalculation, EMF export, save-as from Visio). If that step fails, delivery is unaffected.
 
-## 用法
+## Usage
 ```bash
 pip install pillow
-# 1. 独立 vsdx + PNG 预览
+# 1. Standalone vsdx + PNG preview
 python scripts/xml_backend/build_vsdx.py assets/example_xml_flowchart.py out/
 
-# 2. 重绘 docx 里已有的嵌入图（原稿只读）
-python scripts/xml_backend/inspect_visio_docx.py 方案.docx              # 诊断现状
-python scripts/xml_backend/extract_vsdx.py 方案.docx work/templates     # 解出逐图模板，打印“顺序 → 嵌入后缀”
-#    写 work/figspecs.py：FIGS = [(图号, 嵌入后缀, 生成函数), ...]
+# 2. Redraw figures already embedded in a docx (source manuscript is read-only)
+python scripts/xml_backend/inspect_visio_docx.py 方案.docx              # Diagnose the current state
+python scripts/xml_backend/extract_vsdx.py 方案.docx work/templates     # Extract per-figure templates, printing "order → embedding suffix"
+#    Write work/figspecs.py: FIGS = [(figure number, embedding suffix, generator function), ...]
 python scripts/xml_backend/build_docx.py 方案.docx work/figspecs.py work/templates out.docx --preview work/png
-python scripts/xml_backend/inspect_visio_docx.py out.docx               # 复查
+python scripts/xml_backend/inspect_visio_docx.py out.docx               # Re-check
 
-# 3. 测试（不需要 Visio）
+# 3. Tests (no Visio needed)
 python -m unittest discover -s tests -v
 
-# 4. 可选：Windows + Visio 验证与收尾（需 pywin32）
+# 4. Optional: Windows + Visio verification and finishing (requires pywin32)
 python scripts/xml_backend/visio_finish.py out.docx --verify-only --report r.json
 python scripts/xml_backend/visio_finish.py out.docx final.docx
 ```
 
-## 主题
-主题只换颜色，不换语义角色、版式、字号与连线规则；定义在 `scripts/theme.py` 的 `XML_PALETTES`，与 COM 主题共用注册表（`theme.py` 的 `THEMES`），两条路线同名同义。默认 `tech-cn`，不写主题时外观不变。
+## Themes
+A theme changes only colors, never semantic roles, layout, font sizes, or connector rules; themes are defined in `XML_PALETTES` in `scripts/theme.py`, sharing a registry (`THEMES` in `theme.py`) with the COM themes, so the same name means the same thing on both routes. The default is `tech-cn`; omitting the theme leaves the appearance unchanged.
 
-| 主题 | 适用 | 主色 |
+| Theme | Suited for | Primary color |
 |---|---|---|
-| `tech-cn`（默认） | 中文工程文档 | 深蓝 #1F3864 |
-| `mono` | 严格黑白印刷 | 全灰阶；ok/warn 只用填充深浅区分 |
+| `tech-cn` (default) | Chinese engineering documents | Dark blue #1F3864 |
+| `mono` | Strict black-and-white printing | All grayscale; ok/warn distinguished only by fill darkness |
 
 ```python
-f = Fig(150, 70, theme="mono")   # 单图（黑白印刷）
+f = Fig(150, 70, theme="mono")   # Single figure (black-and-white printing)
 ```
 ```bash
 python scripts/xml_backend/build_docx.py 方案.docx work/figspecs.py work/templates out.docx --theme mono
-VISIO_THEME=mono python scripts/xml_backend/build_vsdx.py assets/example_xml_flowchart.py out/   # 环境变量也行
+VISIO_THEME=mono python scripts/xml_backend/build_vsdx.py assets/example_xml_flowchart.py out/   # Environment variable also works
 ```
-一份文档只用一套主题（见 `references/visio-style-rules.md` §6）。ok/warn 是语义色，除 mono 外各主题相同；每套主题的文字/填充对比度均 ≥ 4.5:1（见 `tests/test_xml_backend.py` 的对比度测试）。
+Use only one theme per document (see `visio-style-rules.md` §6). ok/warn are semantic colors, identical across themes except mono; every theme's text/fill contrast is ≥ 4.5:1 (see the contrast tests in `tests/test_xml_backend.py`).
 
-## 文件
-- `vlib.py`：绘图 DSL（box / text / container / line / conn / legend），输出 Visio 页面 XML 与 PNG 预览；单位 mm，左上原点，Y 向下。
-- `vsdxpkg.py`：模板目录 + 新 page1.xml → vsdx，按图尺寸改页面大小。
-- `extract_vsdx.py`：从 docx 解出全部嵌入 vsdx，保留每张图原有的样式表与窗口部件。
-- `build_docx.py`：逐图替换嵌入 vsdx 与预览，设置对象尺寸并锁定纵横比。
-- `build_vsdx.py`：不经 docx，直接出独立 vsdx。
-- `inspect_visio_docx.py`：只读诊断（尺寸、缩放、拉伸、字号、未粘附连线等）。
-- `visio_finish.py`：Windows + Visio 的缓存值核对、粘附核对、连线几何首末点核对、自动拖动测试（拖动后同时核对端点与几何）、重算、EMF 导出、另存与回写。
-- `assets/templates/blank_vsdx/`：空白模板（单页、无形状、已去作者信息与缩略图）；原稿没有对应嵌入时自动使用。只支持单页模板，多页模板会直接报错。
-- `tests/test_xml_backend.py`：冒烟与回归测试（粘附、零宽/零高连线几何公式、标题带不参与粘附、对齐、错误提示、合成 docx 往返、模板目录清理）。
+## Files
+- `vlib.py`: drawing DSL (box / text / container / line / conn / legend), outputs Visio page XML and PNG previews; units mm, origin at top-left, Y downward.
+- `vsdxpkg.py`: template directory + new page1.xml → vsdx, resizing the page to the figure dimensions.
+- `extract_vsdx.py`: extracts all embedded vsdx files from a docx, preserving each figure's original stylesheets and window parts.
+- `build_docx.py`: replaces embedded vsdx files and previews figure by figure, sets object sizes, and locks the aspect ratio.
+- `build_vsdx.py`: produces a standalone vsdx directly, without going through a docx.
+- `inspect_visio_docx.py`: read-only diagnostics (sizes, scaling, stretching, font sizes, unglued connectors, etc.).
+- `visio_finish.py`: Windows + Visio checks of cached values, gluing, connector geometry first/last points, and automatic drag tests (checking both endpoints and geometry after dragging), plus recalculation, EMF export, save-as, and write-back.
+- `assets/templates/blank_vsdx/`: blank template (single page, no shapes, author info and thumbnails removed); used automatically when the source manuscript has no corresponding embedding. Only single-page templates are supported; a multi-page template errors out directly.
+- `tests/test_xml_backend.py`: smoke and regression tests (gluing, zero-width/zero-height connector geometry formulas, title bands excluded from gluing, alignment, error messages, synthetic docx round-trips, template directory cleanup).
 
-## 字体
-默认字体按操作系统选取（`scripts/font_support.py`，COM 与 XML 两条路线共用）：Windows＝Arial + Microsoft YaHei；macOS＝Helvetica Neue + PingFang SC；Linux＝fontconfig 检测的系统字体（如 Noto Sans CJK）。PNG 预览用同一字体；Visio XML 里 `Font`/`AsianFont` 分别写 Latin/CJK 字体族。可用环境变量覆盖：`VISIO_FONT_LATIN` / `VISIO_FONT_CJK`（字体族）与 `VISIO_FONT_{LATIN,CJK}{,_BOLD}_FILE`（预览度量字体文件）；旧变量 `VISIO_KIT_FONT_R/B`（.ttc 序号 `VISIO_KIT_FONT_INDEX`）仍兼容。找不到字体时报错，不静默换用无关字体。
+## Fonts
+The default font is chosen by operating system (`scripts/font_support.py`, shared by the COM and XML routes): Windows = Arial + Microsoft YaHei; macOS = Helvetica Neue + PingFang SC; Linux = system fonts detected via fontconfig (e.g. Noto Sans CJK). PNG previews use the same font; in Visio XML, `Font`/`AsianFont` carry the Latin/CJK font families respectively. Override with environment variables: `VISIO_FONT_LATIN` / `VISIO_FONT_CJK` (font families) and `VISIO_FONT_{LATIN,CJK}{,_BOLD}_FILE` (preview metric font files); the old variables `VISIO_KIT_FONT_R/B` (.ttc index `VISIO_KIT_FONT_INDEX`) remain compatible. If no font is found, it errors out rather than silently substituting an unrelated font.
 
-## 已知限制
-- 只做整页重绘，不在原图上局部修改，也不处理主控形状、主题继承和模具。
-- 连线是带显式几何行的 1-D 形状，每个几何点都写公式：拖动时端点和线身一起跟随，中间折点按比例伸缩但不会自动重新走线（与 COM 后端的 connect() 一致）。
-- 复杂公式的缓存值由脚本计算，建议有条件时用 `visio_finish.py --verify-only` 核对。
-- `visio_finish.py` 已在真实 Visio 上回归（2026-11-19，Visio Pro + Win10）：粘附核对 / 拖动测试 / 缓存值 / EMF 导出 / 回写全链通过；EMF 导出按「白色不透明页框垫底」保证图幅=页面（透明框不扩大导出范围）。
+## Known Limitations
+- Whole-page redraws only; no local edits to an existing diagram, and no handling of master shapes, theme inheritance, or stencils.
+- Connectors are 1-D shapes with explicit geometry rows, every geometry point written as a formula: when dragged, endpoints and the line body follow together, and middle bend points scale proportionally but do not re-route automatically (same as the COM backend's connect()).
+- Cached values for complex formulas are computed by the script; when possible, verify them with `visio_finish.py --verify-only`.
+- `visio_finish.py` has been regression-tested against real Visio (2026-11-19, Visio Pro + Win10): gluing checks / drag tests / cached values / EMF export / write-back all passed end to end; EMF export uses an "opaque white page frame underneath" so the figure extent equals the page (a transparent frame does not expand the export extent).
 
-完整的风格规则与审查清单见 `references/visio-style-rules.md`。
+For the complete style rules and review checklist, see `visio-style-rules.md`.

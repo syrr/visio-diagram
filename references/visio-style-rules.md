@@ -1,135 +1,137 @@
-# Visio 嵌入对象通用修改指南（给 LLM / Agent）
+[中文文档 (Chinese)](visio-style-rules.zh-CN.md)
 
-版本：v2.3（2026-11-19）
-适用范围：任何 Word（.docx）文档中嵌入的 Visio 对象（.vsdx OLE 对象），以及独立的 .vsdx 图稿。与具体项目无关。
-读者：负责检查、统一风格、重绘或修改这类图的 LLM / Agent，以及人工编辑者。
-用法：先读第 1～3 节确定流程，改图时按第 4～9 节的视觉规则，动文件时按第 10 节的结构规则，工具见第 11～12 节，交付前过第 13 节清单。用户的明确要求优先于本指南；本指南的默认值（页宽、色板、字体）可按文档或用户要求整体替换，但一份文档内必须只用一套。
+# General Guide to Modifying Embedded Visio Objects (for LLMs / Agents)
 
-> 项目特有的信息（图号与嵌入文件的对应、每张图的布局选择、修改记录）不写在本文件里，写在项目自己的台账文件中（参考做法见第 14 节）。
+Version: v2.3 (2026-11-19)
+Scope: any Visio object (.vsdx OLE object) embedded in a Word (.docx) document, and standalone .vsdx artwork. Not tied to any specific project.
+Audience: LLMs / agents responsible for inspecting, unifying the style of, redrawing, or modifying such figures, as well as human editors.
+How to use: read §1–3 first to settle the workflow; follow the visual rules in §4–9 when modifying figures, the structural rules in §10 when touching files; tools are in §11–12, and the pre-delivery checklist is §13. The user's explicit requirements take priority over this guide; the guide's defaults (page width, palette, fonts) may be replaced as a whole per document or per user request, but only one set may be used within a single document.
+
+> Project-specific information (figure-number-to-embedding-file mapping, the layout choice for each figure, modification records) does not go in this file; it goes in the project's own ledger file (see §14 for the recommended approach).
 
 ---
 
-## 1. 总原则
+## 1. General Principles
 
-1. **内容不变，形式统一。** 保留原图的全部实体、关系和文字；只有修正明显错误（图文不符、悬空箭头、重复编号）时才改内容，并逐条记录。
-2. **一图一意。** 每张图只回答一个问题（组成、流程、时序、对应关系），不混用多种画法。
-3. **与正文一致。** 图中名称、编号、流程顺序与正文和图题一致；不一致时优先改图对齐正文，并记录。
-4. **保持可编辑。** 图必须仍是双击可在 Visio 中编辑的嵌入对象，不得替换成纯图片。
-5. **预览与源同步。** Word 显示的是对象的预览图，不是 vsdx 本身；改了 vsdx 必须同时更新预览，否则用户看到的仍是旧图。
-6. **可复现。** 改图通过脚本从原稿生成修改稿，原稿只读；任何人重跑脚本得到同样结果。
+1. **Content unchanged, form unified.** Keep all entities, relationships, and text of the original figure; change content only to fix clear errors (text/figure mismatch, dangling arrows, duplicate numbering), and record each change.
+2. **One figure, one idea.** Each figure answers a single question (composition, flow, timing, correspondence); don't mix drawing styles.
+3. **Consistent with the body text.** Names, numbers, and flow order in the figure match the body text and the figure caption; when they disagree, change the figure to align with the text first, and record it.
+4. **Stay editable.** The figure must remain an embedded object that can be edited in Visio by double-clicking; never replace it with a plain picture.
+5. **Preview in sync with source.** What Word shows is the object's preview image, not the vsdx itself; after changing the vsdx you must also update the preview, otherwise the user still sees the old figure.
+6. **Reproducible.** Modifications are generated from the source manuscript by script; the source is read-only; anyone re-running the script gets the same result.
 
-## 2. 端到端工作流程
+## 2. End-to-End Workflow
 
-1. **备份与解包**：原稿另存为只读副本；docx 是 zip，解包到临时目录。
-2. **盘点**：运行诊断脚本（第 11.3 节）列出每个对象的嵌入文件、预览文件、页面尺寸、Word 显示尺寸、字号、连线问题；按文档顺序建立“图号 → 嵌入文件”对照表，写入项目台账。
-3. **目检**：把每张图的预览渲染成 PNG，逐张用看图工具检查重叠、溢出、悬空、压线。
-4. **出诊断报告**：先给用户“全局问题 + 逐图问题 + 建议”，得到同意后再改。
-5. **定规范**：确定页宽、字体、色板（默认用本指南第 4～8 节）。
-6. **逐图重绘**：用布局 DSL 描述每张图（第 12 节），每张选一个布局模板（第 9 节）。
-7. **回写**：替换 vsdx 页面 XML、页面尺寸、预览图、Word 中的对象尺寸（第 10 节）。
-8. **自检**：XML 可解析、诊断脚本无问题、每张预览目检通过（第 13 节）。
-9. **交付**：把修改稿发给用户，说明改了什么、仍有什么限制（例如未在真实 Visio 中做拖动测试、哪些连线按设计不粘附）。
-10. **记录**：在项目台账追加修改记录（日期、版本、逐图改动）。
+1. **Back up and unpack**: save the source manuscript as a read-only copy; a docx is a zip, so unpack it into a temp directory.
+2. **Inventory**: run the diagnostic script (§11.3) to list each object's embedding file, preview file, page size, Word display size, font sizes, and connector problems; build a "figure number → embedding file" cross-reference in document order and write it into the project ledger.
+3. **Visual inspection**: render each figure's preview as a PNG and check every one with an image viewer for overlaps, overflow, dangling ends, and text pressed against lines.
+4. **Issue a diagnostic report**: first give the user "global issues + per-figure issues + recommendations", and only modify after getting agreement.
+5. **Set the spec**: settle page width, fonts, and palette (defaults in §4–8 of this guide).
+6. **Redraw figure by figure**: describe each figure with the layout DSL (§12), choosing one layout template per figure (§9).
+7. **Write back**: replace the vsdx page XML, page size, preview image, and the object size in Word (§10).
+8. **Self-check**: XML parses, the diagnostic script reports no issues, every preview passes visual inspection (§13).
+9. **Deliver**: send the revised manuscript to the user, explaining what changed and what limitations remain (e.g. no drag test done in real Visio, which connectors are unglued by design).
+10. **Record**: append modification records (date, version, per-figure changes) to the project ledger.
 
-## 3. 诊断要点（常见问题与判定方法）
+## 3. Diagnostic Points (Common Problems and How to Judge Them)
 
-| 问题 | 怎么发现 | 处理 |
+| Problem | How to spot it | Handling |
 |---|---|---|
-| 字号偏小且各图不一 | 页内字号 × Word 缩放比 = 有效字号；< 7.5 pt 或各图差异大 | 统一页宽 = 版心宽，100% 插入，统一字号 |
-| 非等比拉伸 | Word 显示宽/页宽 与 显示高/页高 相差 > 2% | 重置为 100% 并锁定纵横比 |
-| 被二次缩放 | Word 显示宽 ≠ 页宽 | 页宽改成版心宽度后 100% 插入 |
-| 斜线段 | 连线几何相邻两点 x、y 同时变化 | 改正交走线 |
-| 悬空箭头 / 拖动不随动 | 连线没有 `Connect` 记录；或有记录但 BeginX/EndX 没有粘附公式；或端点不在形状边上 | 端点落到形状边，按 7.2 写连接点、粘附公式和 Connect |
-| 连线文字是独立文本框 | 连线附近有无边框的小文本形状，内容是“通过/发送”等 | 删掉文本框，文字写进连线自身的 `<Text>`（7.3） |
-| 从线中间引出的分支线 | 分支起点落在另一条线上，不在任何形状边上 | 改为从源形状边上引出，与主线重叠走同一段（7.2） |
-| 圆角滥用 | `Rounding` ≠ 0 且不是流程终结符 | 改为 0 |
-| 图例、图上说明文字 | 图内有“注：”、图例短线 | 删除，说明放正文；关系用节点表达 |
-| 字体公式错误 | 页面 XML 中出现 `#VALUE!` / `#REF!` / `#NAME?` | 所有 Character 行写明 Font 与 AsianFont |
-| 连线文字压线、压边框 | 目检 | 文字放最长线段中点，白底（7.3） |
-| 文字溢出、挤 | 目检；估算文字宽度 > 框宽 | 加宽框或按意义换行 |
-| 孤立形状 | 无任何连线且非容器/说明 | 改为辅助样式或补关系 |
-| 缺字符号 | ▾、☐ 等显示为方框 | 换成文字或缩进 |
+| Font size too small and inconsistent across figures | In-page font size × Word scale = effective font size; < 7.5 pt or large differences across figures | Unify page width = text-block width, insert at 100%, unify font sizes |
+| Non-uniform stretching | Word display width / page width differs from display height / page height by > 2% | Reset to 100% and lock the aspect ratio |
+| Scaled a second time | Word display width ≠ page width | Change page width to the text-block width, then insert at 100% |
+| Diagonal segments | Adjacent geometry points of a connector change in both x and y | Fix to orthogonal routing |
+| Dangling arrows / endpoints not following on drag | Connector has no `Connect` record; or has a record but BeginX/EndX have no glue formula; or the endpoint is not on a shape edge | Drop endpoints onto shape edges; write connection points, glue formulas, and Connect per 7.2 |
+| Connector text as a standalone text box | A small borderless text shape near a connector, containing "Pass/Send" etc. | Delete the text box; write the text into the connector's own `<Text>` (7.3) |
+| Branch line starting from the middle of a line | Branch start lands on another line, not on any shape edge | Change it to start from the source shape's edge, overlapping the main line along the same segment (7.2) |
+| Rounded-corner abuse | `Rounding` ≠ 0 on anything that is not a flow terminator | Change to 0 |
+| Legend / explanatory text on the figure | "Note:" or legend dashes inside the figure | Delete; put explanations in the body text; express relationships with nodes |
+| Font formula errors | `#VALUE!` / `#REF!` / `#NAME?` appearing in page XML | Write Font and AsianFont on every Character row |
+| Connector text pressed against a line or a border | Visual inspection | Put the text at the midpoint of the longest segment, on a white background (7.3) |
+| Text overflowing / squeezed | Visual inspection; estimated text width > box width | Widen the box or break lines by meaning |
+| Isolated shape | No connectors at all, and not a container/explanation | Change to an auxiliary style or add a relationship |
+| Missing-glyph symbols | ▾, ☐ etc. rendering as boxes | Replace with text or indentation |
 
-注意：时间轴、刻度线、分隔线这类端点处本来就没有形状的线，诊断时“未粘附连线”可忽略；其余未粘附的都要处理。
+Note: lines whose endpoints by nature have no shape there — timelines, tick marks, separators — may be ignored in the "unglued connector" diagnosis; all other unglued connectors must be handled.
 
-## 4. 版面与尺寸
+## 4. Layout and Dimensions
 
-| 项目 | 规则 |
+| Item | Rule |
 |---|---|
-| 页面宽度 | 等于 Word 版心宽度（A4 常见 150～170 mm）；一份文档内所有图相同 |
-| 页面高度 | 按内容定，取 5 mm 整数倍；常见 80～150 mm |
-| 插入 Word | **100% 比例**，宽 = 页宽(mm)/25.4×72 pt，高 = 页高(mm)/25.4×72 pt，锁定纵横比 |
-| 外边距 | 内容距页边 ≥ 4 mm |
-| 网格 | 坐标、尺寸对齐到 0.5 mm；同类元素对齐到同一基线 |
-| 元素间距 | 同排框间距 2.5～8 mm；层（容器）之间 8～10 mm |
-| 禁止 | 非等比拉伸；在 Word 中二次缩放导致字号漂移 |
+| Page width | Equal to the Word text-block width (commonly 150–170 mm for A4); the same for all figures in a document |
+| Page height | Set by content, in multiples of 5 mm; commonly 80–150 mm |
+| Insert into Word | **At 100% scale**, width = page width (mm)/25.4×72 pt, height = page height (mm)/25.4×72 pt, aspect ratio locked |
+| Outer margins | Content ≥ 4 mm from page edges |
+| Grid | Coordinates and sizes aligned to 0.5 mm; same-type elements aligned to the same baseline |
+| Element spacing | 2.5–8 mm between boxes in the same row; 8–10 mm between layers (containers) |
+| Forbidden | Non-uniform stretching; second scaling in Word causing font-size drift |
 
-## 5. 字体与字号
+## 5. Fonts and Font Sizes
 
-| 用途 | 字体 | 字号 | 字重 | 颜色 |
+| Use | Font | Size | Weight | Color |
 |---|---|---|---|---|
-| 普通框文字 | 中文文档：微软雅黑（Latin 名 Microsoft YaHei）；英文文档可用 Segoe UI / Arial | 9 pt | 常规 | #1A1A1A |
-| 重点框文字 | 同上 | 9 pt | 加粗 | #1F3864 |
-| 容器标题（标题带） | 同上 | 9 pt | 加粗 | #FFFFFF |
-| 图内标题 | 同上 | 10 pt | 加粗 | #1F3864 |
-| 连线文字（仅判定分支） | 同上 | 8 pt | 常规 | #404040 |
-| 拥挤处下限 | — | 不低于 7.5 pt（以 Word 中有效字号计） | — | — |
+| Ordinary box text | Chinese documents: Microsoft YaHei (Latin name Microsoft YaHei); English documents may use Segoe UI / Arial | 9 pt | Regular | #1A1A1A |
+| Key box text | Same as above | 9 pt | Bold | #1F3864 |
+| Container title (title band) | Same as above | 9 pt | Bold | #FFFFFF |
+| In-figure title | Same as above | 10 pt | Bold | #1F3864 |
+| Connector text (decision branches only) | Same as above | 8 pt | Regular | #404040 |
+| Floor in crowded spots | — | No less than 7.5 pt (counted as the effective size in Word) | — | — |
 
-- 每个形状的 Character 段写明 `Font` 和 `AsianFont`，不留公式错误。
-- 多行文字按意义换行，每行完整，不溢出边框。
-- 不用目标字体缺字的符号；树形层级用缩进表示。
-- 渲染预览时若无微软雅黑，用度量接近的 Noto Sans SC 代替（见 11.2）。
+- Write `Font` and `AsianFont` in every shape's Character section; leave no formula errors.
+- Break multi-line text by meaning, each line complete, not overflowing the border.
+- Don't use symbols missing from the target font; show tree hierarchy with indentation.
+- When rendering previews without Microsoft YaHei, substitute metrically close Noto Sans SC (see 11.2).
 
-## 6. 配色与形状样式（默认色板）
+## 6. Colors and Shape Styles (Default Palette)
 
-一份文档只用一套色板，不引入色板外的颜色。默认工程风格色板（下表），另有 1 套可选主题（mono），定义在 `scripts/theme.py` 的 `XML_PALETTES`（与 COM 主题共用注册表，两条路线同名同义）：
+Use only one palette per document; don't introduce colors outside the palette. Default engineering-style palette (table below), plus 1 optional theme (mono), defined in `XML_PALETTES` in `scripts/theme.py` (sharing a registry with the COM themes, same name means the same thing on both routes):
 
-| 主题 | 适用 | 主色 |
+| Theme | Suited for | Primary color |
 |---|---|---|
-| `tech-cn`（默认） | 中文工程文档 | 深蓝 #1F3864 |
-| `mono` | 严格黑白印刷 | 全灰阶，ok/warn 只用填充深浅区分 |
+| `tech-cn` (default) | Chinese engineering documents | Dark blue #1F3864 |
+| `mono` | Strict black-and-white printing | All grayscale; ok/warn distinguished only by fill darkness |
 
-用法：单图 `Fig(W, H, theme="mono")`；整批 `build_vsdx.py / build_docx.py --theme mono`（或环境变量 `VISIO_THEME`）。换主题只换颜色：`node/key/dark/ext/ok/warn/soft` 的语义角色、版式、字号、连线规则不变；ok/warn 除 mono 外各主题相同；无阴影、无渐变、无 3D 的规矩对所有主题都适用。默认仍是 tech-cn，不写 theme 时外观不变。
+Usage: single figure `Fig(W, H, theme="mono")`; batch `build_vsdx.py / build_docx.py --theme mono` (or the `VISIO_THEME` environment variable). Changing themes changes only colors: the semantic roles, layout, font sizes, and connector rules of `node/key/dark/ext/ok/warn/soft` stay the same; ok/warn are identical across themes except mono; the no-shadow, no-gradient, no-3D rules apply to all themes. The default remains tech-cn; omitting theme leaves the appearance unchanged.
 
-| 样式名 | 填充 | 边框 | 线型 | 文字 | 用途 |
+| Style name | Fill | Border | Line type | Text | Use |
 |---|---|---|---|---|---|
-| node 普通框 | #FFFFFF | #2E5C8A 0.75 pt | 实线 | #1A1A1A | 一般模块、步骤 |
-| key 重点框 | #DCE8F5 | #2E5C8A 0.75 pt | 实线 | #1F3864 加粗 | 核心模块、主链路节点 |
-| dark 关键框 | #1F3864 | #1F3864 | 实线 | #FFFFFF 加粗 | 每图最关键的 1～2 个节点 |
-| ext 外部框 | #F2F2F2 | #7F7F7F 0.75 pt | 虚线 | #404040 | 外部系统、被测对象、外部输入 |
-| soft 辅助框 | #F3F6FA | #A6B9D0 0.5 pt | 实线 | #1F3864 | 说明条、环境、次要信息 |
-| ok 正向结果 | #E2F0D9 | #548235 | 实线 | #385723 | 一致、通过 |
-| warn 异常结果 | #FBE5D6 | #C55A11 | 实线 | #843C0C | 偏差、缺失、拒绝 |
-| container 容器 | #F7F9FC | #8EA9C1 0.75 pt | 实线 | — | 分层、分组 |
-| container-ext 外部容器 | 无 | #8EA9C1 | 虚线 | — | 外部区域 |
-| band 标题带 | #2F5597 | #2F5597 | — | #FFFFFF 加粗 | 容器左上角标题，高 6.5 mm |
-| lane header 泳道头 | #1F3864 | — | — | #FFFFFF 加粗 | 泳道左侧标题，宽约 22 mm |
+| node ordinary box | #FFFFFF | #2E5C8A 0.75 pt | Solid | #1A1A1A | General modules, steps |
+| key key box | #DCE8F5 | #2E5C8A 0.75 pt | Solid | #1F3864 bold | Core modules, main-chain nodes |
+| dark critical box | #1F3864 | #1F3864 | Solid | #FFFFFF bold | The 1–2 most critical nodes per figure |
+| ext external box | #F2F2F2 | #7F7F7F 0.75 pt | Dashed | #404040 | External systems, objects under test, external inputs |
+| soft auxiliary box | #F3F6FA | #A6B9D0 0.5 pt | Solid | #1F3864 | Explanation bars, environment, secondary information |
+| ok positive result | #E2F0D9 | #548235 | Solid | #385723 | Match, pass |
+| warn exception result | #FBE5D6 | #C55A11 | Solid | #843C0C | Deviation, missing, rejected |
+| container container | #F7F9FC | #8EA9C1 0.75 pt | Solid | — | Layers, groups |
+| container-ext external container | None | #8EA9C1 | Dashed | — | External area |
+| band title band | #2F5597 | #2F5597 | — | #FFFFFF bold | Container's top-left title, 6.5 mm high |
+| lane header swimlane header | #1F3864 | — | — | #FFFFFF bold | Left-side swimlane title, about 22 mm wide |
 
-- 圆角：矩形一律直角（`Rounding=0`）；仅流程图的开始/结束终结符使用圆角（胶囊形）。
-- 保持简洁：图上不放图例、注释和说明性文字；连线只在判定分支上标注条件（如“通过/不通过”）。原来靠连线标注表达的含义（通路名称、数据内容）改为节点表达；说明文字放正文。图号与图名只放在正文题注里。
-- 无阴影、无渐变、无 3D。
-- dark 每图 ≤ 2 个；ok / warn 只用于结果分类，不作装饰。
+- Rounded corners: rectangles are always square (`Rounding=0`); only the start/end terminators of flowcharts use rounded corners (capsule shape).
+- Keep it simple: no legends, annotations, or explanatory text on figures; connectors carry a condition label only on decision branches (e.g. "Pass/Fail"). Meanings previously carried by connector labels (path names, data content) become nodes instead; explanatory text goes in the body. Figure numbers and names appear only in the body-text caption.
+- No shadows, no gradients, no 3D.
+- dark: at most 2 per figure; ok / warn only for classifying results, not decoration.
 
-## 7. 连线
+## 7. Connectors
 
-### 7.1 线型与走线
-| 类型 | 颜色 | 线型 | 线宽 | 用途 |
+### 7.1 Line Types and Routing
+| Type | Color | Line type | Line width | Use |
 |---|---|---|---|---|
-| 主数据流 / 控制流 | #2E5C8A | 实线 | 1 pt | 正向流程 |
-| 回传、留档、上报、离线 | #7F7F7F | 虚线 | 1 pt | 反向或非实时数据 |
-| 闭环迭代 | #2F5597 | 虚线 | 1 pt | 回到起点的迭代 |
-| 异常分支 | #C55A11 | 虚线 | 1 pt | 拒绝、失败分支 |
+| Main data flow / control flow | #2E5C8A | Solid | 1 pt | Forward flow |
+| Return, archiving, reporting, offline | #7F7F7F | Dashed | 1 pt | Reverse or non-real-time data |
+| Closed-loop iteration | #2F5597 | Dashed | 1 pt | Iteration back to the start |
+| Exception branch | #C55A11 | Dashed | 1 pt | Rejected, failed branch |
 
-- 一律**正交（直角）走线**，无斜线段；折点 ≤ 3 个。
-- 箭头：实心三角（Visio `EndArrow=13`，尺寸 1）。
-- 不穿过无关形状、标题带或文字；绕行走层间空隙。
-- 多线汇合/分叉用公共水平“总线”段，分叉点放层间空隙。
-- 一对多支撑关系难画时，用“组到组”的一条关系（例：支撑模块组容器 → 处理链容器）代替多条悬空箭头。
+- Always **orthogonal (right-angle) routing**, no diagonal segments; at most 3 bend points.
+- Arrows: solid triangle (Visio `EndArrow=13`, size 1).
+- Don't cross unrelated shapes, title bands, or text; route around through gaps between layers.
+- For multiple lines merging/branching, use a shared horizontal "bus" segment, with branch points in the gaps between layers.
+- When a one-to-many support relationship is hard to draw, use a single "group-to-group" relationship (e.g. support-module-group container → processing-chain container) instead of multiple dangling arrows.
 
-### 7.2 端点粘附（拖动形状时端点随动）
-目标：用户在 Visio 中拖动任一形状，连在它上面的连线端点跟着移动。只写 `<Connects>` 不够，Visio 靠端点单元格上的公式实现随动。
+### 7.2 Endpoint Gluing (Endpoints Follow When a Shape Is Dragged)
+Goal: when the user drags any shape in Visio, the endpoints of connectors attached to it move along. Writing `<Connects>` alone is not enough — Visio implements the follow behavior with formulas on the endpoint cells.
 
-1. **每个有边框的形状（矩形、容器）都带连接点**：`<Section N="Connection">`，默认四个边中点，另把实际有连线落点的位置补成连接点。每行写公式，形状缩放时连接点跟着走：
+1. **Every bordered shape (rectangle, container) carries connection points**: `<Section N="Connection">`, by default the four edge midpoints, plus extra connection points wherever a connector actually lands. Write a formula on each row so the connection points follow when the shape is resized:
    ```xml
    <Section N="Connection">
      <Row IX="0"><Cell N="X" V="0.59" F="Width*0.5"/><Cell N="Y" V="0.47" F="Height*1"/>
@@ -137,160 +139,160 @@
      …
    </Section>
    ```
-   第 IX 行在公式里叫 `Connections.X{IX+1}` / `Connections.Y{IX+1}`。Connection 段放在 Character、Paragraph 之后、Geometry 之前。
-2. **连线端点写粘附公式**（点到点粘附，保留原来的出线位置）：
+   Row IX is called `Connections.X{IX+1}` / `Connections.Y{IX+1}` in formulas. The Connection section goes after Character and Paragraph, before Geometry.
+2. **Write glue formulas on connector endpoints** (point-to-point gluing, keeping the original exit position):
    ```xml
    <Cell N="BeginX" V="1.23" F="PAR(PNT(Sheet.3!Connections.X2,Sheet.3!Connections.Y2))"/>
    <Cell N="BeginY" V="2.10" F="PAR(PNT(Sheet.3!Connections.X2,Sheet.3!Connections.Y2))"/>
    ```
-   EndX/EndY 同理。`Sheet.n` 是目标形状的 Shape ID，所以先输出所有二维形状、再输出连线。
-3. **同时写 `<Connects>`**，与公式一一对应：
+   Same for EndX/EndY. `Sheet.n` is the target shape's Shape ID, so output all 2-D shapes first, then the connectors.
+3. **Also write `<Connects>`**, one-to-one with the formulas:
    ```xml
    <Connect FromSheet="20" FromCell="BeginX" FromPart="9" ToSheet="3" ToCell="Connections.X2" ToPart="101"/>
    ```
-   `FromPart`：起点 9、终点 12；`ToPart` = 100 + 连接点行号 IX。
-4. **连线自身的尺寸用公式跟随端点**（不旋转，Angle=0）：`PinX=(BeginX+EndX)/2`、`PinY=(BeginY+EndY)/2`、`Width=EndX-BeginX`、`Height=EndY-BeginY`、`LocPinX=Width*0.5`、`LocPinY=Height*0.5`。局部坐标原点即起点，终点在 (Width, Height)，宽高可为负或 0。
-5. **折线几何每个点都写公式**：X 写 `Width*(x/W)`、Y 写 `Height*(y/H)`。W 或 H 为 0 的方向（纯竖线的 X、纯横线的 Y）不能只写数值，否则横向拖动目标后端点跟过去、线身却不动：首点写 `Width*0`、末点写 `Width*1`，中间点按序号就近跟随首端或末端并保留原偏移（如 `Width*0+5 mm`）；`TxtPinX/Y` 同理，零跨度时跟随中点。这样 L 形、Z 形折线在端点移动后仍保持直角，直线变斜线时线身与端点不脱节。
-6. **设为可路由连线**：`ObjType=2`、`ShapeRouteStyle=1`（直角）、`ConLineRouteExt=1`、`ConFixedCode=0`。Visio 重新布线时可能调整折点位置，属正常现象。
-7. **端点必须精确落在形状边框上**（容差 ≤ 0.3 mm），否则找不到粘附目标。自动识别时取边框包含该点的最小形状，不粘到纯文字框。
-8. **不要从线中间引出分支**：线中点不是形状，无法粘附。分支线改为从源形状边上引出，前一段与主线重叠走同一路径，外观不变，两端都能粘附。
-9. 只有端点处确实没有形状时才不粘附：时间轴、刻度线、分隔线，以及指向分隔线的箭头那一端。
+   `FromPart`: 9 for the start point, 12 for the end point; `ToPart` = 100 + connection-point row IX.
+4. **The connector's own size follows its endpoints by formula** (no rotation, Angle=0): `PinX=(BeginX+EndX)/2`, `PinY=(BeginY+EndY)/2`, `Width=EndX-BeginX`, `Height=EndY-BeginY`, `LocPinX=Width*0.5`, `LocPinY=Height*0.5`. The local coordinate origin is the start point, the end point is at (Width, Height), and width/height may be negative or 0.
+5. **Write a formula for every point of a polyline's geometry**: X as `Width*(x/W)`, Y as `Height*(y/H)`. In a direction where W or H is 0 (X of a purely vertical line, Y of a purely horizontal line), a bare number is not enough — otherwise, when the target is dragged sideways, the endpoint follows but the line body stays put: write `Width*0` for the first point and `Width*1` for the last point, and have middle points follow the nearer end by index while keeping their original offset (e.g. `Width*0+5 mm`); `TxtPinX/Y` likewise, following the midpoint when the span is zero. This way L- and Z-shaped polylines stay right-angled after endpoints move, and a line turning diagonal doesn't detach from its endpoints.
+6. **Make it a routable connector**: `ObjType=2`, `ShapeRouteStyle=1` (right-angle), `ConLineRouteExt=1`, `ConFixedCode=0`. Visio may adjust bend-point positions when re-routing; that's normal.
+7. **Endpoints must land exactly on shape borders** (tolerance ≤ 0.3 mm), otherwise no glue target is found. When auto-detecting, take the smallest shape whose border contains the point; don't glue to a pure text box.
+8. **Don't branch off the middle of a line**: a line's midpoint is not a shape and cannot be glued to. Change the branch to start from the source shape's edge, with its first segment overlapping the main line along the same path; the appearance is unchanged and both ends can be glued.
+9. Leave unglued only when there really is no shape at the endpoint: timelines, tick marks, separators, and the end of an arrow pointing at a separator.
 
-### 7.3 连线文字
-- 连线文字写在**连线自身的文本**里，不另建文本框；这样拖动连线或形状时文字随线移动，删除连线时一起删除。
-- 写法：在连线 Shape 中加 `TxtPinX/TxtPinY`（按 Width/Height 比例写公式，零跨度方向见上条，放最长线段中点）、`TxtWidth/TxtHeight`、`TxtLocPinX=TxtWidth*0.5`、`TxtLocPinY=TxtHeight*0.5`、`TxtAngle=0`、白色文字背景 `TextBkgnd`（`F="RGB(255,255,255)"`）、`TextBkgndTrans=0`，文本边距 0；再加 Character（8 pt）、Paragraph（居中）段，最后 `<Text>`。
-- 只在判定分支上用（7.1 之外的含义改为节点）。
+### 7.3 Connector Text
+- Connector text is written in the **connector's own text**, not a separate text box; that way the text moves with the line when the connector or a shape is dragged, and is deleted together with the connector.
+- How to write it: in the connector Shape add `TxtPinX/TxtPinY` (formulas proportional to Width/Height; for the zero-span direction see the previous item; place at the midpoint of the longest segment), `TxtWidth/TxtHeight`, `TxtLocPinX=TxtWidth*0.5`, `TxtLocPinY=TxtHeight*0.5`, `TxtAngle=0`, a white text background `TextBkgnd` (`F="RGB(255,255,255)"`), `TextBkgndTrans=0`, and zero text margins; then add Character (8 pt) and Paragraph (centered) sections, and finally `<Text>`.
+- Use it only on decision branches (meanings beyond 7.1 become nodes).
 
-## 8. 标题、编号与说明
+## 8. Titles, Numbering, and Explanations
 
-- 图号与图名由 Word 题注提供，图内不重复图号。
-- 不加图例和图上注释；线型含义在正文说明，或改用节点表达。
-- 步骤编号用 ①②③…；同一图内只有一套编号。
-- 图中术语与正文一致：正文口径变了（例如某功能从“存储并查找”改为“按模型推演”），相关图的节点名同步改，并记录。
+- Figure numbers and names come from the Word caption; don't repeat the figure number inside the figure.
+- No legends or on-figure annotations; explain what line types mean in the body text, or express them with nodes instead.
+- Number steps with ①②③…; only one numbering set per figure.
+- Figure terminology matches the body text: when the body text's wording changes (e.g. some function changes from "store and look up" to "infer by model"), the node names in the affected figures change in step, and are recorded.
 
-## 9. 布局模板（按图类型）
+## 9. Layout Templates (by Figure Type)
 
-| 图类型 | 布局 |
+| Figure type | Layout |
 |---|---|
-| 分层架构图 | 自上而下的容器层（如 客户端 → 服务 → 运行环境），层内模块等宽横排，层间箭头不加标签 |
-| 系统组成 / 网络图 | 本系统放左/上容器，外部对象用 ext 放右/下；每台终端设备都要有连线接入网络，不留孤立设备 |
-| 线性流程图 | 单列或单行等宽步骤框，主线居中；回路沿外侧走；只有开始/结束用圆角 |
-| 判定 / 分支流程 | 输入 → 判定层 → 结果层（ok/warn）→ 汇总 → 输出，分叉用总线；分支条件写在连线文本里 |
-| 双方交互图 | 左右两个等宽容器，同行的框一一对应，水平箭头穿过中缝 |
-| 泳道 / 对应关系图 | 横向泳道 + 左侧深色泳道头；或多列表头 + 行对齐 |
-| 时序图 | 分段容器；时间轴为深色实线箭头，事件用短竖箭头，刻度对齐 |
-| 界面示意图 | 窗口外框直角；标题栏 dark，菜单栏/状态栏 soft，按钮左对齐，页签等宽网格，树形缩进 5 mm |
+| Layered architecture diagram | Top-down container layers (e.g. Client → Services → Runtime environment), equal-width modules in a horizontal row within each layer, no labels on inter-layer arrows |
+| System composition / network diagram | This system in a left/top container, external objects as ext on the right/bottom; every terminal device must have a connector joining the network, no isolated devices left |
+| Linear flowchart | A single column or row of equal-width step boxes, main line centered; loops run along the outside; only start/end use rounded corners |
+| Decision / branching flow | Input → decision layer → result layer (ok/warn) → summary → output, branches on a bus; branch conditions written in connector text |
+| Two-party interaction diagram | Two equal-width containers left and right, boxes in the same row corresponding one-to-one, horizontal arrows crossing the middle seam |
+| Swimlane / correspondence diagram | Horizontal swimlanes + dark swimlane header on the left; or multi-column headers + row alignment |
+| Timing diagram | Segmented containers; the timeline is a dark solid arrow, events are short vertical arrows, ticks aligned |
+| UI mockup | Window outer frame square; title bar dark, menu/status bars soft, buttons left-aligned, tabs in an equal-width grid, tree indentation 5 mm |
 
-## 10. 文件结构与技术规则
+## 10. File Structure and Technical Rules
 
-### 10.1 docx 中的 Visio 对象
-- 每个对象在 `word/document.xml` 中是一个 `<w:object>`，内含：
-  - `<v:shape style="width:…pt;height:…pt">` 显示尺寸，`<v:imagedata r:id>` 指向预览图（原稿常为 EMF）；
-  - `<o:OLEObject ProgID="Visio.Drawing.15" r:id>` 指向 `word/embeddings/Microsoft_Visio_DrawingN.vsdx`；
-  - `w:dxaOrig / w:dyaOrig` 原始尺寸，单位 twips（mm/25.4×1440）。
-- rId 到文件的映射在 `word/_rels/document.xml.rels`。按 `<w:object>` 在 document.xml 中出现的顺序即文档顺序；嵌入文件编号（Drawing、Drawing1…）**不一定**等于文档顺序，必须按 rId 实际对照。
+### 10.1 Visio Objects in a docx
+- Each object is a `<w:object>` in `word/document.xml`, containing:
+  - `<v:shape style="width:…pt;height:…pt">` display size, with `<v:imagedata r:id>` pointing at the preview image (usually EMF in the source manuscript);
+  - `<o:OLEObject ProgID="Visio.Drawing.15" r:id>` pointing at `word/embeddings/Microsoft_Visio_DrawingN.vsdx`;
+  - `w:dxaOrig / w:dyaOrig` original size, in twips (mm/25.4×1440).
+- The rId-to-file mapping is in `word/_rels/document.xml.rels`. The order of `<w:object>` elements in document.xml is the document order; the embedding file numbers (Drawing, Drawing1…) do **not** necessarily equal the document order — always cross-check against the actual rId.
 
-### 10.2 修改一张图必须同时做
-1. 改 vsdx 内 `visio/pages/pageN.xml`（形状、连线、Connects）。
-2. 改 `visio/pages/pages.xml` 的 `PageWidth` / `PageHeight`（单位英寸）。
-3. 生成新预览 PNG（≥ 250 dpi），放入 `word/media/`，把对应 imagedata 关系的 Target 改为它；删除不再被引用的旧预览文件。
-4. 改 `<v:shape>` 的 `style` 宽高（pt），`w:dxaOrig/w:dyaOrig`（twips），把 `<v:shape>` 内的 `<o:lock aspectratio="f"/>` 改为 `"t"`。
-5. `[Content_Types].xml` 确保有 `<Default Extension="png" ContentType="image/png"/>`。
-6. 重新打包 vsdx 与 docx 时，`[Content_Types].xml` 放第一个条目，其余尽量保持原顺序。
-7. 保留 vsdx 中原有的 document.xml、样式表、主控形状等部件，只替换页面内容，避免 Visio 打开报错。
+### 10.2 Modifying One Figure Means Doing All of These
+1. Change `visio/pages/pageN.xml` inside the vsdx (shapes, connectors, Connects).
+2. Change `PageWidth` / `PageHeight` in `visio/pages/pages.xml` (in inches).
+3. Generate a new preview PNG (≥ 250 dpi), put it in `word/media/`, change the corresponding imagedata relationship's Target to it; delete old preview files no longer referenced.
+4. Change the `<v:shape>` `style` width/height (pt) and `w:dxaOrig/w:dyaOrig` (twips), and change `<o:lock aspectratio="f"/>` inside `<v:shape>` to `"t"`.
+5. Make sure `[Content_Types].xml` has `<Default Extension="png" ContentType="image/png"/>`.
+6. When repackaging the vsdx and docx, put `[Content_Types].xml` as the first entry and keep the rest as close to the original order as possible.
+7. Keep the vsdx's original document.xml, stylesheets, master shapes, and other parts; replace only the page content, to avoid errors when Visio opens it.
 
-### 10.3 Visio 页面 XML 要点
-- 命名空间 `http://schemas.microsoft.com/office/visio/2012/main`；单位英寸；**Y 轴向上**（从上到下排版时 y_visio = 页高 − y）。
-- 二维形状：`Type="Shape"`，样式引用 `LineStyle/FillStyle/TextStyle="0"`，格式全部写本地单元格（FillForegnd、LineColor、LinePattern、LineWeight、Rounding 等）。
-- 顺序：Cell 在前，Section（Character、Paragraph、Geometry）在后，`<Text>` 最后。
-- Character 行写 `Font`、`AsianFont`、`Size`（英寸，pt/72，`U="PT"`）、`Color`、`Style`（1=加粗）、`LangID`。
-- 连线：一维形状，写 `BeginX/BeginY/EndX/EndY`、`ObjType=2`、`EndArrow=13`、折线 Geometry；端点粘附、尺寸公式、连线文字按第 7.2、7.3 节写。
-- 只有 `<Connects>` 而端点单元格没有 `PAR(PNT(...))` 公式时，Visio 中拖动形状端点不会随动；这是最常见的“看着连上了其实没粘住”。
-- 容器的标题带若是独立形状，拖动容器时不会跟随；需要整体移动时，把标题写进容器自身文本，或在 Visio 中组合。
-- 无 Visio 的环境里无法做拖动测试；有 Windows + Visio 时用 `visio_finish.py --verify-only` 自动拖动验证，否则请使用者双击图、拖一个形状确认。
+### 10.3 Visio Page XML Essentials
+- Namespace `http://schemas.microsoft.com/office/visio/2012/main`; units in inches; **Y axis pointing up** (when laying out top-to-bottom, y_visio = page height − y).
+- 2-D shapes: `Type="Shape"`, style references `LineStyle/FillStyle/TextStyle="0"`, all formatting written as local cells (FillForegnd, LineColor, LinePattern, LineWeight, Rounding, etc.).
+- Order: Cells first, Sections (Character, Paragraph, Geometry) after, `<Text>` last.
+- Character rows carry `Font`, `AsianFont`, `Size` (inches, pt/72, `U="PT"`), `Color`, `Style` (1 = bold), `LangID`.
+- Connectors: 1-D shapes, written with `BeginX/BeginY/EndX/EndY`, `ObjType=2`, `EndArrow=13`, and polyline Geometry; endpoint gluing, size formulas, and connector text per §7.2 and §7.3.
+- When there is only `<Connects>` and the endpoint cells have no `PAR(PNT(...))` formula, dragging a shape in Visio won't move the endpoints; this is the most common "looks connected but isn't actually glued" case.
+- If a container's title band is a standalone shape, it won't follow when the container is dragged; to move them together, write the title into the container's own text, or group them in Visio.
+- In an environment without Visio, drag testing isn't possible; with Windows + Visio, use `visio_finish.py --verify-only` for automatic drag verification; otherwise ask the user to double-click the figure and drag one shape to confirm.
 
-## 11. 工具链（本指南实际使用过的工具）
+## 11. Toolchain (Tools Actually Used with This Guide)
 
-### 11.1 Agent 使用
-任何能执行 shell、读写文件、以图片方式查看 PNG 的 LLM Agent 都可按本指南工作；每张图改完都要看一遍预览 PNG。
+### 11.1 Agent Use
+Any LLM agent that can run a shell, read/write files, and view PNGs as images can work from this guide; look at the preview PNG after finishing each figure.
 
-### 11.2 运行环境与库
-- Python 3 标准库：`zipfile`（docx/vsdx 解包打包）、`re`（定位 `<w:object>`、改尺寸属性）、`xml.etree.ElementTree` / `lxml`（解析与校验 XML）、`xml.sax.saxutils.escape`（转义形状文字）、`math`（连线角度与局部坐标）。
-- Pillow（PIL）：渲染预览 PNG（`ImageDraw.rounded_rectangle`、`text(anchor='mm')`、手工虚线）。
-- 字体：按操作系统取默认（`scripts/font_support.py`：Windows Arial + Microsoft YaHei、macOS Helvetica Neue + 苹方、Linux fontconfig 检测），PNG 预览与 Visio XML 用同一字体族；可用 `VISIO_FONT_LATIN` / `VISIO_FONT_CJK` 与 `VISIO_FONT_*_FILE` 覆盖（旧变量 `VISIO_KIT_FONT_R/B` 兼容）。找不到字体时报错，不静默替换。
-- 没有 Visio / LibreOffice 也能完成：预览由脚本自己画，不依赖 Office 渲染 vsdx。
+### 11.2 Runtime Environment and Libraries
+- Python 3 standard library: `zipfile` (unpacking/packaging docx/vsdx), `re` (locating `<w:object>`, changing size attributes), `xml.etree.ElementTree` / `lxml` (parsing and validating XML), `xml.sax.saxutils.escape` (escaping shape text), `math` (connector angles and local coordinates).
+- Pillow (PIL): renders preview PNGs (`ImageDraw.rounded_rectangle`, `text(anchor='mm')`, hand-drawn dashes).
+- Fonts: defaults by operating system (`scripts/font_support.py`: Windows Arial + Microsoft YaHei, macOS Helvetica Neue + PingFang, Linux fontconfig detection); PNG previews and Visio XML use the same font families; override with `VISIO_FONT_LATIN` / `VISIO_FONT_CJK` and `VISIO_FONT_*_FILE` (old variables `VISIO_KIT_FONT_R/B` compatible). If no font is found, it errors out; no silent substitution.
+- It can be done with no Visio / LibreOffice: previews are drawn by the script itself and don't depend on Office rendering the vsdx.
 
-### 11.3 XML 后端脚本（scripts/xml_backend/）
-| 文件 | 作用 | 用法 |
+### 11.3 XML Backend Scripts (scripts/xml_backend/)
+| File | What it does | Usage |
 |---|---|---|
-| `scripts/xml_backend/extract_vsdx.py` | 从原稿 docx 解出全部嵌入 vsdx，作为该文档的**模板目录**（保留每张图原有样式表、窗口等部件），并打印正文顺序→嵌入后缀对照 | `python3 extract_vsdx.py 原稿.docx work/templates` |
-| `assets/templates/blank_vsdx/` | 空白 vsdx 模板（单页、无形状、样式表含 vlib 用到的 0 号样式、已去作者信息和缩略图） | 新增图或原稿没有对应嵌入时自动使用 |
-| `scripts/xml_backend/inspect_visio_docx.py` | **通用诊断**：逐个对象列出页面尺寸、Word 尺寸、缩放、非等比拉伸、纵横比锁定、公式错误、斜线、未粘附连线（按 Connects 统计）、最小有效字号 | `python3 inspect_visio_docx.py file.docx` |
-| `scripts/xml_backend/vlib.py` | **通用绘图 DSL**：样式色板、容器、正交连线 → Visio 页面 XML + PNG 预览；自动给形状加连接点、把落在边框上的连线端点粘附上去、连线文字写入连线自身 | 见第 12 节 |
-| `scripts/xml_backend/vsdxpkg.py` | vsdx 打包库：模板目录副本 + 新 page1.xml + 按图尺寸改页面大小 → vsdx | 被下面两个脚本调用 |
-| `scripts/xml_backend/build_docx.py` | 回写 docx：逐图替换嵌入 vsdx、预览 PNG、Word 对象尺寸与纵横比锁定、Content_Types | `python3 build_docx.py 原稿.docx figspecs.py work/templates 输出.docx --preview work/png` |
-| `scripts/xml_backend/build_vsdx.py` | 不经过 docx，直接生成独立 .vsdx + PNG 预览 | `python3 build_vsdx.py figspecs.py out/ [图号...]` |
-| `scripts/xml_backend/visio_finish.py` | **Windows + 本机 Visio 的验证与收尾（可选）**：缓存值核对、粘附核对、连线几何首末点核对、自动拖动测试；强制重算、导出 EMF（纵横比不符则保留 PNG）、Visio 另存 vsdx、回写 docx。单图失败不影响其余，有问题时退出码 1 | `python visio_finish.py 生成.docx 终稿.docx --report r.json`；只验证加 `--verify-only` |
-| `assets/example_xml_flowchart.py` | 最小示例：带判定分支的流程图 | `python scripts/xml_backend/build_vsdx.py assets/example_xml_flowchart.py out/` |
+| `scripts/xml_backend/extract_vsdx.py` | Extracts all embedded vsdx files from the source docx as that document's **template directory** (keeping each figure's original stylesheets, windows, and other parts), and prints the body-order → embedding-suffix cross-reference | `python3 extract_vsdx.py 原稿.docx work/templates` |
+| `assets/templates/blank_vsdx/` | Blank vsdx template (single page, no shapes, stylesheet includes the 0th style used by vlib, author info and thumbnails removed) | Used automatically for new figures or when the source has no corresponding embedding |
+| `scripts/xml_backend/inspect_visio_docx.py` | **General diagnostics**: per object, lists page size, Word size, scaling, non-uniform stretching, aspect-ratio lock, formula errors, diagonal lines, unglued connectors (counted by Connects), minimum effective font size | `python3 inspect_visio_docx.py file.docx` |
+| `scripts/xml_backend/vlib.py` | **General drawing DSL**: style palette, containers, orthogonal connectors → Visio page XML + PNG preview; automatically adds connection points to shapes, glues connector endpoints that land on borders, writes connector text into the connector itself | See §12 |
+| `scripts/xml_backend/vsdxpkg.py` | vsdx packaging library: template-directory copy + new page1.xml + page resized to the figure → vsdx | Called by the two scripts below |
+| `scripts/xml_backend/build_docx.py` | Writes back the docx: replaces embedded vsdx files, preview PNGs, Word object sizes, and aspect-ratio locking, figure by figure; Content_Types | `python3 build_docx.py 原稿.docx figspecs.py work/templates 输出.docx --preview work/png` |
+| `scripts/xml_backend/build_vsdx.py` | Generates a standalone .vsdx + PNG preview directly, without going through a docx | `python3 build_vsdx.py figspecs.py out/ [图号...]` |
+| `scripts/xml_backend/visio_finish.py` | **Windows + local Visio verification and finishing (optional)**: cached-value checks, gluing checks, connector geometry first/last-point checks, automatic drag tests; forced recalculation, EMF export (keeps the PNG when the aspect ratio doesn't match), Visio save-as of the vsdx, write-back to the docx. A single figure failing doesn't affect the rest; exit code 1 on problems | `python visio_finish.py 生成.docx 终稿.docx --report r.json`; add `--verify-only` for verification only |
+| `assets/example_xml_flowchart.py` | Minimal example: a flowchart with a decision branch | `python scripts/xml_backend/build_vsdx.py assets/example_xml_flowchart.py out/` |
 
-### 11.4 分工
-- 生成一律用 XML 后端，任何平台都能跑，结果确定、可比对。
-- 有 Windows + Visio 时，交付前跑 `visio_finish.py`：先 `--verify-only` 看报告，无问题再正式收尾。没有 Visio 时直接交付 build_docx 的输出（PNG 预览）。
-- 只有带主控形状、主题、需局部修改的复杂原图，才直接用 COM 改原图。
+### 11.4 Division of Labor
+- Generation always uses the XML backend; it runs on any platform, with deterministic, comparable results.
+- With Windows + Visio, run `visio_finish.py` before delivery: first `--verify-only` to read the report, then the formal finishing pass if there are no issues. Without Visio, deliver the build_docx output directly (PNG previews).
+- Only complex source figures with master shapes, themes, or a need for local edits are modified directly with COM on the original figure.
 
-## 12. 绘图 DSL 用法（`vlib.py`）
+## 12. Drawing DSL Usage (`vlib.py`)
 
-坐标单位 mm，原点左上，y 向下；导出时自动转为 Visio 英寸、Y 向上。
+Coordinate units mm, origin top-left, y downward; converted automatically to Visio inches, Y upward, on export.
 
 ```python
 from vlib import Fig, LINE, GRAY, BLUE
-f = Fig(170, 110)                                   # 页宽 170 mm，页高 110 mm
-f.container('sys', 4, 4, 162, 60, '本系统', tw=30)  # 容器 + 左上角标题带（dashed=True 为外部容器）
-f.box('a', 10, 18, 30, 12, '配置导入')              # 样式默认 node
-f.box('b', 50, 18, 40, 12, '处理核心', 'key')       # 样式：node/key/dark/ext/soft/ok/warn
-f.conn('a', 'r', 'b', 'l')                          # 从 a 右边中点到 b 左边中点，自动正交
-f.conn('b', 'r', 'c', 'l', label='通过')            # 判定分支：label 写进连线自身文本，自动放最长段中点
-f.conn('c', 'l', 'a', 'b', via=[(20, 70)], dashed=True)  # via 手工给折点
-f.line([(x1, y1), (x2, y2)], src='a', dst='b')      # 完全手工折线；src/dst 可省，端点落在边框上会自动粘附
-f.render_png('fig.png', S=10)                       # S=像素/mm，10 ≈ 254 dpi
-print(f.glue_report())                              # (已粘附端点数, 端点总数)，核对未粘附的是否都是轴线/刻度
-xml = f.visio_xml()                                 # 写入 vsdx 的 visio/pages/page1.xml
+f = Fig(170, 110)                                   # Page width 170 mm, page height 110 mm
+f.container('sys', 4, 4, 162, 60, 'This system', tw=30)  # Container + top-left title band (dashed=True for an external container)
+f.box('a', 10, 18, 30, 12, 'Import configuration')  # Style defaults to node
+f.box('b', 50, 18, 40, 12, 'Processing core', 'key')  # Styles: node/key/dark/ext/soft/ok/warn
+f.conn('a', 'r', 'b', 'l')                          # From a's right midpoint to b's left midpoint, orthogonal automatically
+f.conn('b', 'r', 'c', 'l', label='Pass')            # Decision branch: label written into the connector's own text, placed at the longest segment's midpoint automatically
+f.conn('c', 'l', 'a', 'b', via=[(20, 70)], dashed=True)  # via gives bend points manually
+f.line([(x1, y1), (x2, y2)], src='a', dst='b')      # Fully manual polyline; src/dst optional, endpoints landing on borders glue automatically
+f.render_png('fig.png', S=10)                       # S=pixels/mm, 10 ≈ 254 dpi
+print(f.glue_report())                              # (glued endpoint count, total endpoint count); check that unglued ones are all axes/ticks
+xml = f.visio_xml()                                 # Written into the vsdx as visio/pages/page1.xml
 ```
 
-- `conn` 的边：`t/b/l/r`；`fa/fb` 为边上比例位置（0～1），用于同一边引出多条线。
-- 手工折线的端点坐标必须正好落在形状边框上；分支线从源形状边上引出，不从另一条线中间引出。
-- `legend()`、`text(..., 'note')` 仍保留在库里，但按第 6、8 节默认不用。
-- 辅助函数思路：`row(n, x0, x1, gap)` 计算等宽横排；`chain(f, ids)` 依次左右相连。
-- 字体按操作系统取默认；覆盖用 `VISIO_FONT_LATIN` / `VISIO_FONT_CJK`（或旧变量 `VISIO_KIT_FONT_R/B`），无需改代码。
+- `conn` edges: `t/b/l/r`; `fa/fb` are proportional positions along an edge (0–1), for drawing multiple lines from the same edge.
+- Manual polyline endpoints must land exactly on shape borders; branch lines start from the source shape's edge, not from the middle of another line.
+- `legend()` and `text(..., 'note')` remain in the library, but are not used by default per §6 and §8.
+- Helper-function ideas: `row(n, x0, x1, gap)` computes equal-width horizontal rows; `chain(f, ids)` connects them left-to-right in sequence.
+- Fonts are taken from the operating-system default; override with `VISIO_FONT_LATIN` / `VISIO_FONT_CJK` (or the old variables `VISIO_KIT_FONT_R/B`); no code changes needed.
 
-## 13. 交付前自检清单
+## 13. Pre-Delivery Self-Check Checklist
 
-- [ ] 页宽 = 版心宽，Word 中 100% 且纵横比锁定（诊断脚本无“缩放/拉伸/未锁定”）
-- [ ] 字体统一，正文 9 pt、连线文字 8 pt，有效字号 ≥ 7.5 pt，无公式错误
-- [ ] 只用一套色板；dark ≤ 2 个
-- [ ] 矩形直角（终结符除外）；无图例、无图上注释
-- [ ] 连线全部正交、不穿越无关形状
-- [ ] 两端有形状的连线全部粘附：BeginX/EndX 有 `PAR(PNT(...))` 公式，`<Connects>` 一一对应；未粘附的只剩轴线、刻度、分隔线
-- [ ] 没有从线中间引出的分支
-- [ ] 连线文字只在判定分支上，且写在连线自身文本里，没有独立的标签文本框
-- [ ] 文字不溢出，层级缩进规整
-- [ ] 与正文、图题一致；编号不冲突
-- [ ] 预览图已同步更新，旧预览已删除
-- [ ] 所有 XML 可解析；docx 能被 zip 正常读取
-- [ ] 每张预览已用看图工具逐张目检
-- [ ] 交付说明里请用户在 Visio 中拖动一个形状验证随动
-- [ ] 在项目台账写好修改记录
+- [ ] Page width = text-block width, 100% in Word with aspect ratio locked (diagnostic script shows no "scaling/stretching/unlocked")
+- [ ] Fonts unified: body 9 pt, connector text 8 pt, effective font size ≥ 7.5 pt, no formula errors
+- [ ] Only one palette used; dark ≤ 2
+- [ ] Rectangles square (except terminators); no legends, no on-figure annotations
+- [ ] All connectors orthogonal, not crossing unrelated shapes
+- [ ] All connectors with shapes at both ends glued: BeginX/EndX have `PAR(PNT(...))` formulas, `<Connects>` one-to-one; the only unglued ones left are axes, ticks, separators
+- [ ] No branches starting from the middle of a line
+- [ ] Connector text only on decision branches, written in the connector's own text, with no standalone label text boxes
+- [ ] Text not overflowing, hierarchy indentation tidy
+- [ ] Consistent with body text and figure captions; no numbering conflicts
+- [ ] Preview images updated in sync, old previews deleted
+- [ ] All XML parses; docx readable as a zip
+- [ ] Every preview visually inspected with an image viewer
+- [ ] Delivery notes ask the user to drag a shape in Visio to verify the follow behavior
+- [ ] Modification records written in the project ledger
 
-## 14. 项目台账（建议做法）
+## 14. Project Ledger (Recommended Approach)
 
-每份被修改的文档单独建一个台账文件（例如 `PROJECT_FIGURES.md`），记录：
-- 图号 → 嵌入文件对照（文档顺序）；
-- 每张图采用的布局模板；
-- 对本指南默认值的偏离（例如页宽 150 mm、换用其他色板）及原因；
-- 修改记录：日期、版本、逐图改动、内容性修改的理由。
+Keep a separate ledger file for each modified document (e.g. `PROJECT_FIGURES.md`), recording:
+- Figure number → embedding file cross-reference (document order);
+- The layout template used for each figure;
+- Deviations from this guide's defaults (e.g. page width 150 mm, a different palette) and why;
+- Modification records: date, version, per-figure changes, reasons for content changes.
 
-本指南只放通用规则；发现新的通用经验（新问题类型、新模板、新工具用法）时，更新本指南并在下方记录。
+This guide holds only general rules; when new general experience is found (a new problem type, a new template, a new tool usage), update this guide and record it below.
 
-## 15. 指南变更记录
+## 15. Guide Change Log
 
-- v2.3（2026-11-19）：随 XML 后端一并提交；规则来自一份 17 图中文设计方案的统一重绘与评审修改。
+- v2.3 (2026-11-19): submitted together with the XML backend; rules drawn from the unified redraw and review revisions of a 17-figure Chinese design proposal.

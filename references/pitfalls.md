@@ -1,22 +1,24 @@
-# 避坑清单
+[中文文档 (Chinese)](pitfalls.zh-CN.md)
 
-以下每一条都是实际踩过、且**不看就会浪费大量时间**的问题。按严重程度排序。
+# Pitfalls Checklist
+
+Every item below is a problem actually hit in practice, and one that will **waste a lot of time if you don't read it first**. Ordered by severity.
 
 ---
 
-## 1. PowerShell 无法实例化 COM（环境级）
+## 1. PowerShell cannot instantiate COM (environment level)
 
-**症状**
+**Symptoms**
 
 ```
 [SandboxError] COM object instantiation can run arbitrary code ...
 ```
 
-或 `New-Object -ComObject Visio.Application` 直接失败。
+Or `New-Object -ComObject Visio.Application` fails outright.
 
-**原因**：执行策略把 COM 实例化当作任意代码执行拦截了。
+**Cause**: the execution policy treats COM instantiation as arbitrary code execution and blocks it.
 
-**对策**：**一律改用 Python + pywin32**。
+**Fix**: **always use Python + pywin32 instead**.
 
 ```bash
 pip install pywin32
@@ -27,107 +29,107 @@ import win32com.client as win32
 app = win32.Dispatch("Visio.Application")
 ```
 
-用 late binding（`Dispatch`）即可，不必 `gencache.EnsureDispatch`。
+Late binding (`Dispatch`) is enough; there is no need for `gencache.EnsureDispatch`.
 
-**推论**：先探测环境，不要假设「本机没装 Visio」。检查：
+**Corollary**: probe the environment first; don't assume "Visio isn't installed on this machine". Check:
 
 ```bash
 ls "C:/Program Files/Microsoft Office/root/Office16/VISIO.EXE"
 ```
 
-Office 通常同时装 Visio 与 Word，Word 可用于更新目录域、转 PDF、做版式实测。
+Office usually installs Visio and Word together, and Word can be used to update table-of-contents fields, convert to PDF, and test layouts for real.
 
 ---
 
-## 2. `Shape.TextBounds` 不存在（API 级，最隐蔽）
+## 2. `Shape.TextBounds` does not exist (API level, the most insidious)
 
-**症状**：想判断文字有没有溢出框，调用 `shape.TextBounds`：
+**Symptoms**: you want to tell whether text overflows its box, so you call `shape.TextBounds`:
 
 ```
 AttributeError: <win32com.gen_py...> object has no attribute 'TextBounds'
 ```
 
-早晚绑定都取不到。**这个属性/方法在 Visio 类型库里根本不存在**。
+Neither early nor late binding can reach it. **This property/method simply does not exist in the Visio type library**.
 
-**危险之处**：如果把它包在 `try/except` 里「探测」，会**静默失败** —— 检查器永远返回「无溢出」，让人误以为排版没问题。
+**The danger**: if you wrap it in `try/except` to "probe" for it, it **fails silently** — the checker always reports "no overflow", leaving you believing the layout is fine.
 
-**对策**：改用**字体度量**自行估算折行高度。
+**Fix**: estimate wrapped-line height yourself using **font metrics**.
 
 ```python
 from PIL import ImageFont
-f = ImageFont.truetype(r"C:\Windows\Fonts\msyh.ttc", px)   # 字号 -> 像素
+f = ImageFont.truetype(r"C:\Windows\Fonts\msyh.ttc", px)   # point size -> pixels
 wpx = width_mm / 25.4 * 96.0
-# 按框宽逐字试排，累计行数
+# Lay out character by character against the box width, accumulating line count
 asc, desc = f.getmetrics()
 need_mm = lines * (asc + desc) / 96.0 * 25.4
 ```
 
-已封装为 `visio_lib.text_extent_mm()` 与 `VDraw.check()`。
+This is already wrapped as `visio_lib.text_extent_mm()` and `VDraw.check()`.
 
-**注意**：字体名要和度量用的字体文件对应（微软雅黑 → `msyh.ttc`，宋体 → `simsun.ttc`），否则行数估算会偏。
+**Note**: the font name must match the font file used for measuring (Microsoft YaHei → `msyh.ttc`, SimSun → `simsun.ttc`); otherwise the line-count estimate will be off.
 
 ---
 
-## 3. 文字溢出只能靠自检发现
+## 3. Text overflow can only be caught by self-checking
 
-Visio **不会**因为文字超框而报错或警告 —— 它会直接把文字溢出到框外，导出后才发现。
+Visio will **not** raise an error or warning when text exceeds its box — it just lets the text spill outside the box, and you only discover it after exporting.
 
-**对策**：每张图导出前跑一次自检，把 `check()` 作为出图流程的固定一环。
+**Fix**: run a self-check before exporting every diagram, making `check()` a fixed step of the figure-production flow.
 
 ```python
-d.check()     # 打印 [文字溢出] N 处，含「几行 / 需要多高」
+d.check()     # prints [text overflow] N places, with "how many lines / how tall it needs to be"
 ```
 
-**调参经验**（本 skill 的实际取值）：
+**Tuning experience** (the actual values used by this skill):
 
-- 图元内左右内边距 `MARGIN_MM` 从 1.2 → **0.8**，可显著减少假性溢出；
-- 中文字号：框标题 8.5~9 pt，框内说明 7~7.5 pt；再小在 A4 正文里就糊了；
-- 宁可**把框加高**，不要缩字号 —— 缩字号在缩放嵌入后会不可读。
-
----
-
-## 4. 按 1:1 出图，不要按「画布大小」出图
-
-如果按 A4 满宽画（比如 21 cm），嵌进正文栏宽只有 17.5 cm 的文档时会被缩到 83%，字号 7 pt 实际只有 5.8 pt，**印出来看不清**。
-
-**对策**：**按最终印刷宽度 1:1 出图**。
-
-- 先量出正文栏宽（见 `docx_embed.content_column_mm()`）；
-- 图幅按栏宽的 95%~100% 设计（例如栏宽 175 mm → 画布宽 150~175 mm）；
-- 嵌入时按 100%~105% 缩放，字号的视觉大小基本不变。
+- The left/right inner padding inside shapes, `MARGIN_MM`, from 1.2 → **0.8**, which significantly reduces false-positive overflow;
+- Chinese font sizes: box titles 8.5–9 pt, text inside boxes 7–7.5 pt; any smaller and it blurs in A4 body text;
+- Rather **make the box taller** than shrink the font size — shrinking the size makes it unreadable after scaled embedding.
 
 ---
 
-## 5. 忽略装订线（gutter）导致表格/图溢出页面
+## 4. Export at 1:1 scale, not at "canvas size"
 
-**症状**：文档页宽 21 cm，左右边距各 1 cm，按 19 cm 排表格 —— 渲染 PDF 后文字跑到 21.19 cm，**右侧溢出页面**。
+If you draw at full A4 width (say 21 cm) and then embed into a document whose body column is only 17.5 cm wide, it gets scaled down to 83%, so 7 pt type ends up effectively 5.8 pt and is **illegible in print**.
 
-**原因**：模板的 `w:pgMar` 里带 `w:gutter="851"`（1.5 cm 装订线），**Word 中是生效的**。正文实际起点 = 左边距 + 装订线 = 2.5 cm，可用栏宽 = 21 − 1 − 1 − 1.5 = **17.5 cm**。
+**Fix**: **draw at 1:1 against the final print width**.
 
-**对策**：从 `sectPr` 动态算，不要硬编码。
+- First measure the body column width (see `docx_embed.content_column_mm()`);
+- Design the figure at 95%–100% of the column width (e.g. a 175 mm column → canvas width 150–175 mm);
+- Embed at 100%–105% scaling, so the visual size of the type barely changes.
+
+---
+
+## 5. Ignoring the gutter makes tables/figures run off the page
+
+**Symptoms**: the document page is 21 cm wide with 1 cm margins on each side, so you lay out a table at 19 cm — after rendering to PDF the text runs to 21.19 cm, **overflowing the right edge of the page**.
+
+**Cause**: the template's `w:pgMar` carries `w:gutter="851"` (a 1.5 cm gutter), which **takes effect in Word**. The real start of the body text = left margin + gutter = 2.5 cm, so the usable column width = 21 − 1 − 1 − 1.5 = **17.5 cm**.
+
+**Fix**: compute it dynamically from `sectPr`; don't hard-code it.
 
 ```python
 from docx_embed import content_column_mm
 mm, twips = content_column_mm("方案.docx")     # -> (175.0, 9921)
 ```
 
-注意：若带 `w:gutterAtTop`，装订线在上边，不减宽度。
+Note: if `w:gutterAtTop` is present, the gutter is at the top and does not reduce the width.
 
 ---
 
-## 6. 中文行末标点悬挂会被误判成「溢出」
+## 6. Hanging punctuation at the end of a Chinese line gets misread as "overflow"
 
-渲染 PDF 后用文字块边界量宽度，会看到行末超出栏宽约 **0.2 cm**。**这不是缺陷** —— 是 Word 的「允许标点溢出边界」中文排版行为（`、。；，）` 等标点可以悬挂在边界外）。
+After rendering to PDF and measuring with text-block boundaries, you will see lines extending about **0.2 cm** past the column width. **This is not a defect** — it is Word's Chinese typesetting behaviour of "allowing punctuation to hang outside the boundary" (punctuation such as `、。；，）` may hang outside the boundary).
 
-**对策**：判定溢出时给 0.3 cm 容差；或只统计**非标点结尾**的行。
+**Fix**: allow a 0.3 cm tolerance when judging overflow; or count only lines that end in **non-punctuation**.
 
 ---
 
-## 7. Visio 进程残留
+## 7. Leftover Visio processes
 
-`doc.Close()` 之后如果忘了 `app.Quit()`，`VISIO.EXE` 会留在后台。反复运行脚本会累积多个实例，最终导致 COM 调用超时或失败。
+If you forget `app.Quit()` after `doc.Close()`, `VISIO.EXE` stays running in the background. Repeated script runs accumulate multiple instances, eventually causing COM calls to time out or fail.
 
-**对策**：`close()` 里同时做 `Close()` 和 `Quit()`，并且都包 `try/except`（文档可能已被关闭）。
+**Fix**: do both `Close()` and `Quit()` inside `close()`, each wrapped in `try/except` (the document may already be closed).
 
 ```python
 for fn in (lambda: self.doc.Close(), lambda: self.app.Quit()):
@@ -137,45 +139,45 @@ for fn in (lambda: self.doc.Close(), lambda: self.app.Quit()):
         pass
 ```
 
-另外设 `app.AlertResponse = 7` 抑制弹窗 —— 否则一个「是否保存」对话框就能让无人值守的脚本永久挂起。
+Also set `app.AlertResponse = 7` to suppress pop-ups — otherwise a single "Save?" dialog can hang an unattended script forever.
 
 ---
 
-## 8. `Char.Font` 不加引号会静默失效
+## 8. `Char.Font` silently fails without quotes
 
 ```python
 s.CellsU("Char.Font").FormulaU = '"微软雅黑"'   # ✓
-s.CellsU("Char.Font").FormulaU = '微软雅黑'      # ✗ 不报错，但字体不生效
+s.CellsU("Char.Font").FormulaU = '微软雅黑'      # ✗ no error, but the font does not take effect
 ```
 
-Visio 公式里字符串要带引号。同理 `CellsU` 的值一律是字符串，布尔用 `"0"`/`"1"`。
+Strings in Visio formulas must be quoted. Likewise, `CellsU` values are always strings, and booleans use `"0"`/`"1"`.
 
 ---
 
-## 9. EMF 的绝对物理尺寸不可靠，只能信宽高比
+## 9. The absolute physical size in EMF is unreliable — trust only the aspect ratio
 
-**症状**：从 EMF 头 `rclFrame` 读出 115.13 mm，但同一张图导出的 PNG 是 530 px @ 96 DPI = **140 mm**。差了 22%，到底哪个对？
+**Symptoms**: reading 115.13 mm from the EMF header's `rclFrame`, while a PNG exported from the same figure is 530 px @ 96 DPI = **140 mm**. A 22% discrepancy — which one is right?
 
-**原因**：Visio 导出 EMF 时写的 `rclFrame` 隐含约 **117 DPI**，而 PNG 用 96 DPI。EMF 的 `rclFrame`（0.01 mm）与 `rclBounds`（像素）之间并不遵循 96 DPI 约定，不同导出器取值也不同。
+**Cause**: when Visio exports EMF, the `rclFrame` it writes implies about **117 DPI**, while PNG uses 96 DPI. The EMF's `rclFrame` (0.01 mm) and `rclBounds` (pixels) do not follow the 96 DPI convention, and different exporters use different values.
 
-**验证方法**：同时读 `rclBounds` 和 `rclFrame`，两者推出的隐含 DPI 若不是 96，就说明绝对值不可信。
+**How to verify**: read both `rclBounds` and `rclFrame`; if the implied DPI they yield is not 96, the absolute values are not trustworthy.
 
 ```python
 info = emf_info("图.emf")
-info["implied_dpi"]     # 117.4 → 绝对值不可信
-info["ratio"]           # 1.0843 → 这个可靠
+info["implied_dpi"]     # 117.4 → absolute values not trustworthy
+info["ratio"]           # 1.0843 → this one is reliable
 ```
 
-**对策**：**只用宽高比**，宽度按目标栏宽显式指定，高度 = 宽度 × ratio。
+**Fix**: **use only the aspect ratio**; specify the width explicitly from the target column width, and set height = width × ratio.
 
 ```python
 w_mm = 170.0
 h_mm = w_mm * info["ratio"]
 ```
 
-实测四张图的比对结果 —— 比例吻合到小数点后三位，绝对值差 22%：
+Measured comparison across four figures — ratios agree to three decimal places while absolute values differ by 22%:
 
-| 图 | EMF `frame_mm` | PNG 宽高比 | EMF 宽高比 |
+| Figure | EMF `frame_mm` | PNG aspect ratio | EMF aspect ratio |
 |---|---|---|---|
 | N2 | 113.4 × 116.8 | 1.0306 | 1.0302 |
 | N3 | 115.1 × 124.8 | 1.0849 | 1.0843 |
@@ -184,21 +186,21 @@ h_mm = w_mm * info["ratio"]
 
 ---
 
-## 10. Word COM 会抛「Call was rejected by callee」
+## 10. Word COM throws "Call was rejected by callee"
 
-**症状**：
+**Symptoms**:
 
 ```
 pywintypes.com_error: (-2147418111, 'Call was rejected by callee.', None, None)
 ```
 
-出现在 `Documents.Add()` 之后紧接着的赋值、`Close()`、`SaveAs()` 等看似普通的调用上。
+It appears on seemingly ordinary calls right after `Documents.Add()` — assignments, `Close()`, `SaveAs()`, and the like.
 
-**原因**：Word 正在忙（后台加载、重排、或弹了一个**模态对话框**）。此时 COM 调用会被直接拒绝。
+**Cause**: Word is busy (loading in the background, repaginating, or showing a **modal dialog**). COM calls are then rejected outright.
 
-**危险之处**：如果这个异常发生在 `finally` 块里，它会**掩盖主流程的真实结果**；而且 `Quit()` 没执行到，`WINWORD.EXE` 会残留在后台 —— 残留实例又会继续抢占，导致后续每次调用都失败，形成恶性循环。
+**The danger**: if this exception occurs inside a `finally` block, it will **mask the real outcome of the main flow**; and because `Quit()` never runs, `WINWORD.EXE` is left running in the background — and the leftover instance keeps hogging resources, so every subsequent call fails too, in a vicious cycle.
 
-**对策**：两件事一起做。
+**Fix**: do both things together.
 
 ```python
 def _retry(fn, times=6, delay=0.4):
@@ -216,454 +218,452 @@ def _quiet(fn):
     except Exception:
         pass
 
-doc = _retry(lambda: app.Documents.Open(path))    # 关键调用加重试
+doc = _retry(lambda: app.Documents.Open(path))    # add retries to key calls
 ...
 finally:
-    _quiet(lambda: doc.Close(False))              # 收尾永不抛
+    _quiet(lambda: doc.Close(False))              # cleanup never throws
     _quiet(lambda: app.Quit())
 ```
 
-**排查残留进程**（Windows）：
+**Checking for leftover processes** (Windows):
 
 ```bash
 tasklist //FI "IMAGENAME eq WINWORD.EXE"
 taskkill //PID <pid> //F
 ```
 
-Visio 侧同理，但 `visio_lib.VDraw.close()` 已做 `_quiet` 处理，实测不会残留。
+The same applies on the Visio side, but `visio_lib.VDraw.close()` already does `_quiet` handling, and in practice it leaves nothing behind.
 
-**注意**：`Documents.Add()` 后立刻操作 `Content.Text` 是最容易触发的位置 —— 新建文档时 Word 还在初始化。
+**Note**: operating on `Content.Text` immediately after `Documents.Add()` is the easiest place to trigger this — Word is still initializing when a new document is created.
 
 ---
 
-## 11. 箭头「漂移」——连上了框，但落点不在边中点
+## 11. Arrow "drift" — connected to the box, but landing off the edge midpoint
 
-**症状**：箭头确实连到了目标框，但落点明显偏向一侧（常见是快贴到框角），看起来像箭头「漂移」了。
+**Symptoms**: the arrow really is connected to the target box, but its landing point is clearly off to one side (often almost touching a corner), making the arrow look as if it has "drifted".
 
-**真实案例**：一张跨泳道图，源框 `142–164`（中心 153）、目标框 `100–152`（中心 126）。
-作者为了取巧，把竖箭头放在 `x=147` —— 那是**两个框水平重叠区（142–152）的中点**，
-看上去「两边都不偏」。但实际渲染出来：
+**Real case**: a cross-lane diagram, source box `142–164` (centre 153), target box `100–152` (centre 126).
+To cut a corner, the author placed the vertical arrow at `x=147` — the midpoint of the **horizontal overlap of the two boxes (142–152)**,
+which looks like "it favours neither side". But the actual rendering shows:
 
-- 在源框上只占 **23%** 位置（贴着左边）
-- 在目标框上占到 **90%** 位置（快贴到右沿）
+- On the source box it sits at only **23%** of the way across (hugging the left side)
+- On the target box it reaches **90%** of the way across (almost touching the right edge)
 
-两端同时偏离框中心，视觉上就是「箭头向右漂移」。
+Both ends deviate from the box centres at once, so visually the arrow "drifts to the right".
 
-**为什么容易犯**：取重叠区中点这个思路本身有道理（保证箭头两端都在框内），
-但它忽略了「视觉上箭头应对准框中心」这个更强的约束。
+**Why it's easy to make this mistake**: taking the midpoint of the overlap zone is reasonable in itself (it guarantees both ends of the arrow stay inside the boxes),
+but it ignores the stronger constraint that "visually, the arrow should point at the centre of the box".
 
-**对策**：两个框错位时，**不要用直连**，改用 L 形折线，两端各对准框中心。
+**Fix**: when two boxes are offset from each other, **don't use a straight connection**; use an L-shaped polyline, with each end aligned to its box's centre.
 
 ```python
-# ✗ 直连：两端都偏
+# ✗ Straight connection: both ends off-centre
 d.v_arrow(147, 38.5, 81.5)
 
-# ✓ L 形：源框底边中心 → 下 → 左 → 目标框顶边中心
+# ✓ L shape: source box bottom-centre → down → left → target box top-centre
 d.poly([(153, 38.5), (153, 77), (126, 77), (126, 81.5)], arrow=4)
 ```
 
-**自检**：`scripts/audit_align.py` 会报出「单独连到某条边、却偏离该边中点 > 2mm」的端点。
-注意它是**启发式**：同一侧扇出多条箭头（各自接到不同高度的框）时，偏移是正常的。
+**Self-check**: `scripts/audit_align.py` flags any endpoint that is "connected to one edge alone, yet deviates from that edge's midpoint by > 2mm".
+Note that it is a **heuristic**: when several arrows fan out from the same side (each going to a box at a different height), the offset is normal.
 
-**排查渲染 vs 设计**：若怀疑是渲染问题而非坐标问题，把 vsdx 的精确几何用红线叠到导出的 PNG 上：
+**Distinguishing rendering from design**: if you suspect a rendering problem rather than a coordinate problem, overlay the exact geometry from the vsdx onto the exported PNG in red:
 
 ```python
-# 读 vsdx 的 PinX/PinY/Width/Height 与 Begin/End，按同一比例画到 PNG 上
+# Read PinX/PinY/Width/Height and Begin/End from the vsdx, draw them onto the PNG at the same scale
 dr.rectangle([x1*kx, y1*ky, x2*kx, y2*ky], outline=(255, 0, 0), width=1)
 ```
 
-红线与黑线重合 → 几何无误，是设计坐标的问题；错开 → 是坐标换算或渲染的问题。
+Red lines coinciding with black lines → the geometry is fine and the design coordinates are the problem; misaligned → it is a coordinate conversion or rendering problem.
 
-**顺带一提**：箭头端点与框边之间常留 0.5mm 左右间隙（避免箭头压在框线上），
-这是正常做法；但如果间隙大到看起来「箭头没顶到框」，就应缩到 0.3mm 以内。
+**By the way**: a gap of about 0.5mm is often left between an arrow endpoint and the box edge (to keep the arrow from pressing on the box outline),
+which is normal practice; but if the gap is so large that the arrow looks like it "doesn't reach the box", shrink it to within 0.3mm.
 
 ---
 
-## 12. L 形折线的折点落在相邻框的边上
+## 12. The bend point of an L-shaped polyline lands on a neighbouring box's edge
 
-**症状**：`audit_align.py` 报某个带箭头线段的**起端**偏离某框边中点很远（几十 mm），
-但你分明是按「对准框中心」写的。看渲染图会发现：折线有一段**贴着旁边那个框的下沿**走。
+**Symptoms**: `audit_align.py` reports that the **start** of an arrowed line segment deviates from some box edge's midpoint by a long way (tens of mm),
+yet you clearly wrote it as "aligned to the box centre". Looking at the rendered figure, you find that one stretch of the polyline runs **hugging the bottom edge of the neighbouring box**.
 
-**真实案例**：四个结果框并排，`未命中`(x 122–166) 要连到 `按配置未输出`(x 94–134)。
-写成
+**Real case**: four result boxes side by side; `未命中` ("no hit", x 122–166) needs to connect to `按配置未输出` ("not output per configuration", x 94–134).
+Written as
 
 ```python
-# ✗ 折点 (114, 60.5) 正好落在邻居框「命中·数值差>容差」(x 64–116, 下沿 y=60) 的边上
+# ✗ Bend point (114, 60.5) lands exactly on the edge of the neighbouring box "命中·数值差>容差" ("hit · value difference > tolerance", x 64–116, bottom edge y=60)
 d.poly([(138, 60.5), (114, 60.5), (114, 69.5)], arrow=4)
 ```
 
-`x=114` 落在左邻框的 x 区间 `64–116` 内，而 `y=60.5` 几乎就是它的下沿 `y=60`。
-于是：折线的水平段贴着左邻框下沿画过去（视觉上像「粘」在别人框上），
-同时审计把起端 `(114, 60.5)` 判定成「连到左邻框下边、却偏离中点 24mm」。
+`x=114` falls inside the left neighbour's x range `64–116`, while `y=60.5` is almost exactly its bottom edge `y=60`.
+So the horizontal stretch of the polyline runs hugging the left neighbour's bottom edge (visually looking "stuck" to someone else's box),
+and at the same time the audit judges the start `(114, 60.5)` as "connected to the left neighbour's bottom edge, yet 24mm off its midpoint".
 
-**根因**：只想着「折点要落在两个框之间的空隙里」，忘了检查**折点是否落在别的框的边上**。
-横向折线的 `y` 选得离某排框的下沿太近（差 0.5mm）时尤其容易中招。
+**Root cause**: thinking only about "the bend point should land in the gap between the two boxes" and forgetting to check **whether the bend point lands on another box's edge**.
+This is especially easy to hit when the `y` of a horizontal polyline stretch is chosen too close to the bottom edge of some row of boxes (off by 0.5mm).
 
-**对策**：折点所在的那条「走线车道」要和上下两排框都留出**明显间隙**（≥3mm），
-并且起端/末端各对准源框与目标框的边中点：
+**Fix**: the "routing lane" the bend point sits on must keep a **clear gap (≥3mm)** from the rows of boxes above and below,
+and the start/end must each align to the source and target boxes' edge midpoints:
 
 ```python
-# ✓ 走 y=65 车道：距上排框下沿(60) 5mm、距下排框上沿(70) 5mm；两端各对框中心
+# ✓ Route on the y=65 lane: 5mm from the upper row's bottom edge (60), 5mm from the lower row's top edge (70); both ends aligned to box centres
 d.poly([(144, 60.5), (144, 65), (114, 65), (114, 69.5)], arrow=4)
 ```
 
-**自检**：`audit_align.py` 会把这类问题暴露成「起端偏离很远」——
-**偏离特别大（>20mm）时，先怀疑折点压到了邻居框的边**，而不是怀疑坐标换算。
-同一批 L 形折线尽量**共用同一条走线车道**（同一 `y`），既整齐又便于一次性检查。
+**Self-check**: `audit_align.py` exposes this kind of problem as "start deviates a long way" —
+**when the deviation is especially large (>20mm), suspect first that the bend point is pressing on a neighbouring box's edge**, not that the coordinate conversion is wrong.
+Try to make a batch of L-shaped polylines **share the same routing lane** (the same `y`); it looks tidier and is easier to check in one pass.
 
 ---
 
-## 13. ★ 换成 OLE 后图幅被压扁（只写 `Width` 的陷阱）
+## 13. ★ After switching to OLE, the figure gets squashed (the trap of writing only `Width`)
 
-**症状**：EMF 直接插入时比例正常；一旦「原地换成 Visio OLE 对象」（路线 C），
-图就**变扁**了 —— 方框被横向拉长 / 纵向压扁，肉眼一眼可见。实测 11 张图里 6 张失真，
-最严重 **+20%**（例如 N4：EMF 宽高比 0.973，文档里变成 1.172）。
+**Symptoms**: the proportions are fine when the EMF is inserted directly; but once it is "swapped in place for a Visio OLE object" (route C),
+the figure **goes flat** — rectangles are stretched horizontally / squashed vertically, visible at a glance. In practice 6 of 11 figures were distorted,
+the worst by **+20%** (e.g. N4: EMF aspect ratio 0.973, becoming 1.172 in the document).
 
-**根因**：`InlineShapes.AddOLEObject()` 插入时按 **OLE 对象（Visio 文档）自身的固有纵横比**
-决定尺寸。脚本若只写 `new.Width = w`，Word 会**自行重算高度** —— 算出来的是 Visio 那边的比例，
-不是 EMF 的比例。于是「宽对了、高错了」。
+**Root cause**: when `InlineShapes.AddOLEObject()` inserts, it sizes by the **OLE object (the Visio document) itself's intrinsic aspect ratio**.
+If the script only writes `new.Width = w`, Word **recomputes the height itself** — using Visio's ratio,
+not the EMF's. So "the width is right, the height is wrong".
 
-**为什么难发现**：页数、表格数、禁词、`w:object` 计数、`Content_Types`、孤行标题
-**全都正常**；`docx_audit.py` 也不查这个。必须专门比对图幅才能发现。
+**Why it's hard to spot**: page count, table count, banned words, `w:object` count, `Content_Types`, and orphan headings are **all normal**;
+`docx_audit.py` doesn't check this either. You have to compare figure sizes specifically to find it.
 
-**对策**：替换前记下原图的 `Width` **和** `Height`，替换后**两个都写回**，并且先关掉纵横比锁定
-（否则后写的那一维会带动另一维）：
+**Fix**: before replacing, note down the original figure's `Width` **and** `Height`, write **both** back after replacing, and turn off aspect-ratio locking first
+(otherwise the dimension written second will drag the other one along):
 
 ```python
-rng, w, h = sh.Range, sh.Width, sh.Height     # ← 原图幅来自 EMF 宽高比，唯一可信
+rng, w, h = sh.Range, sh.Width, sh.Height     # ← original size comes from the EMF aspect ratio, the only trustworthy one
 sh.Delete()
 new = rng.InlineShapes.AddOLEObject(FileName=abs_vsdx)
-new.LockAspectRatio = 0                       # msoFalse，必须先关
+new.LockAspectRatio = 0                       # msoFalse, must be turned off first
 new.Width = w
-new.Height = h                                # ★ 关键：显式锁死高度
+new.Height = h                                # ★ key: explicitly pin the height
 ```
 
-**校验（两种口径，任一即可）**：
+**Verification (either method works)**:
 
 ```python
-# 口径 1：查 XML 里 v:shape 的 style，与 EMF 宽高比比对，偏差应 ≤0.1%
+# Method 1: check the v:shape style in the XML, compare against the EMF aspect ratio; deviation should be ≤0.1%
 #   <v:shape id="_x0000_i1026" type="#_x0000_t75" style="width:481.5pt;height:495.5pt">
 re.findall(r'style="width:([0-9.]+)pt;height:([0-9.]+)pt"', document_xml)
 
-# 口径 2：导出 PDF 后量绘图矩形包围盒（pymupdf）
-rs = [d['rect'] for d in page.get_drawings()]      # 取图所在 y 区间的那些
+# Method 2: after exporting to PDF, measure the bounding box of the drawing rectangles (pymupdf)
+rs = [d['rect'] for d in page.get_drawings()]      # take those in the figure's y range
 aspect = (max(r.x1 for r in rs) - min(r.x0 for r in rs)) / \
          (max(r.y1 for r in rs) - min(r.y0 for r in rs))
 ```
 
-> ⚠️ 量 PDF 时**别用固定 clip 框**：图比 clip 高时会把下半截切掉，算出来的宽高比偏大，
-> 让人误以为还没修好。要么用 `get_drawings()` 的矩形包围盒，要么先确认 clip 覆盖整张图。
+> ⚠️ When measuring the PDF, **don't use a fixed clip box**: if the figure is taller than the clip, the lower half gets cut off, the computed aspect ratio comes out too large,
+> and you are misled into thinking it still isn't fixed. Either use the bounding box of the rectangles from `get_drawings()`, or first confirm the clip covers the whole figure.
 
-**顺带**：`docx_embed.emf_size_mm()` 读出的 `rclFrame` 宽高比是可靠的（见 §9），
-`合成`/`插入` 阶段按它算出的宽高是**对的**；错只错在「换 OLE」这一步。
+**By the way**: the `rclFrame` aspect ratio read by `docx_embed.emf_size_mm()` is reliable (see §9),
+and the width/height computed from it during the `合成` ("compose") / `插入` ("insert") stages are **correct**; the error is only in this "swap to OLE" step.
 
 ---
 
-## 14. 残留 `VISIO.EXE` 会让 OLE 嵌入**陈旧内容**（2026-10-10 实坑）
+## 14. A leftover `VISIO.EXE` makes OLE embed **stale content** (real pitfall, 2026-10-10)
 
-**现象**：重跑图脚本 + 重跑合成/定稿后，docx 里某张图**仍是旧内容**（旧文字/旧版式），
-而 `图表素材/<图>.vsdx` 磁盘文件**明明是新画的**；「合成后、未定稿」的内嵌 EMF 也是新的
-→ 说明问题只出在**「换 OLE」这一步**。
+**Symptoms**: after re-running the figure scripts and re-running compose/finalize, one figure in the docx is **still the old content** (old text/old layout),
+while the `图表素材/<figure>.vsdx` file on disk is **clearly newly drawn**; the embedded EMF in the "composed but not finalized" version is also new
+→ so the problem is only in this **"swap to OLE" step**.
 
-**根因**：上次会话遗留了一个 headless `VISIO.EXE` 进程。Word 执行
-`InlineShapes.AddOLEObject(FileName=vsdx)` 时，**Visio 的 OLE 服务器复用了那个已存在的实例**，
-而该实例里还开着**旧版文档**（同路径）→ 于是把旧内容嵌进了 docx。
+**Root cause**: a headless `VISIO.EXE` process was left over from the previous session. When Word executes
+`InlineShapes.AddOLEObject(FileName=vsdx)`, **Visio's OLE server reuses that already-running instance**,
+which still has the **old version of the document** open (same path) → so the old content gets embedded into the docx.
 
-**修复**：
+**Fix**:
 ```bash
-tasklist //FI "IMAGENAME eq VISIO.EXE"          # 先看有没有残留
-taskkill //PID <pid> //F                        # 杀掉（Word 也要一起清）
-# 然后重跑：合成 → 定稿
+tasklist //FI "IMAGENAME eq VISIO.EXE"          # first check whether any are left over
+taskkill //PID <pid> //F                        # kill it (clear Word too)
+# Then re-run: compose → finalize
 ```
 
-**预防 / 复验**（嵌入后逐张核对，别只看「11 张」够不够）：
+**Prevention / re-verification** (check each figure after embedding; don't just check that "11 figures" is enough):
 ```python
 import zipfile, io
 z = zipfile.ZipFile(docx)
-# ① OLE 预览：word/media/*.emf（矢量，文字是 UTF-16LE）
+# ① OLE preview: word/media/*.emf (vector, text is UTF-16LE)
 for n in z.namelist():
     if n.startswith('word/media/'):
         t = z.read(n).decode('utf-16-le', 'ignore')
-        assert '旧词' not in t, n            # 有旧词 = 预览是旧的
-# ② 内嵌源文件：word/embeddings/*.vsdx 本身就是 zip，读它的页面 XML
+        assert '旧词' not in t, n            # old word present = the preview is old
+# ② Embedded source file: word/embeddings/*.vsdx is itself a zip; read its page XML
 for n in z.namelist():
     if n.startswith('word/embeddings/'):
         iz = zipfile.ZipFile(io.BytesIO(z.read(n)))
         t = ''.join(iz.read(p).decode('utf-8', 'ignore')
                     for p in iz.namelist()
                     if p.startswith('visio/pages/page') and p.endswith('.xml'))
-        assert '旧词' not in t, n            # 有旧词 = 嵌进去的 vsdx 是旧的
+        assert '旧词' not in t, n            # old word present = the embedded vsdx is old
 ```
 
-> 一句话：**动 Word/Visio COM 前，先确认没有残留的 `VISIO.EXE` / `WINWORD.EXE`。
+> In one sentence: **before touching Word/Visio COM, first confirm there are no leftover `VISIO.EXE` / `WINWORD.EXE` processes.
 
 ---
 
-## 15. ★ 连接点细胞的 Y 是「向上」的 —— `add_cp` 的 fy 上下颠倒（2026-10-12 实坑）
+## 15. ★ The Y of a connection-point cell points "up" — `add_cp`'s fy is flipped vertically (real pitfall, 2026-10-12)
 
-**症状**：竖线从「上框顶边」起笔，却**贯穿两个方块**才停下；COM 逐条打印
-`BeginX/BeginY/EndX/EndY`（`Result("mm")`）与设计坐标完全不符。一次影响 12 张图里的
-49 条连接线，肉眼却只在渲染图上看出「线穿过了框」。
+**Symptoms**: a vertical line starts from the "top edge of the upper box" but **runs straight through both boxes** before stopping; COM prints
+`BeginX/BeginY/EndX/EndY` (`Result("mm")`) for each line that completely disagrees with the design coordinates. One incident affected
+49 connector lines across 12 figures, yet the naked eye could only see "the line passes through the box" in the rendered figure.
 
-**根因**：`Connections.Y{n}` 是**局部坐标**——原点在形状**左下角**、**Y 轴向上**。
-绘图库对外约定是「左上角原点、Y 向下」，写 `=Height*fy` 时 `fy=1.0` 落在**上边**
-（与直觉相反）。这条公式在类型库里看不出任何异常，Visio 也不报错。
+**Root cause**: `Connections.Y{n}` is a **local coordinate** — origin at the shape's **bottom-left corner**, **Y axis pointing up**.
+The drawing library's outward convention is "top-left origin, Y pointing down", so writing `=Height*fy` puts `fy=1.0` on the **top edge**
+(the opposite of intuition). Nothing in the type library looks wrong about this formula, and Visio raises no error.
 
-**对策**：库里内部改写为 `=Height*(1-fy)`，`fy` 的语义改成「**自上边起算**」
-（0 = 上、1 = 下、0.5 = 中）；`side_cps` 的方向向量同步（top → DirY=+1）。
-调用方**零改动**。
+**Fix**: inside the library, rewrite it as `=Height*(1-fy)`, and change the meaning of `fy` to "**measured from the top edge**"
+(0 = top, 1 = bottom, 0.5 = middle); `side_cps`' direction vectors are synchronized (top → DirY=+1).
+Callers need **zero changes**.
 
 ```python
-self._f(s, "Connections.X%d" % n, "=Width*%.10g" % float(fx))      # fx 自左起算，方向天然一致
-self._f(s, "Connections.Y%d" % n, "=Height*(1-%.10g)" % float(fy))  # fy 自上起算，必须翻转
+self._f(s, "Connections.X%d" % n, "=Width*%.10g" % float(fx))      # fx measured from the left, direction naturally consistent
+self._f(s, "Connections.Y%d" % n, "=Height*(1-%.10g)" % float(fy))  # fy measured from the top, must be flipped
 ```
 
-**自检口径**（比看图可靠）：连接线画完后用 COM 读每条线的
-`BeginX/BeginY/EndX/EndY` 的 `Result("mm")`，逐条与设计坐标核对。
-页高要从 `PageSheet.CellsU("PageHeight").Result("mm")` 读，**不要拍脑袋填**。
+**Self-check** (more reliable than looking at the figure): after drawing the connectors, use COM to read each line's
+`BeginX/BeginY/EndX/EndY` as `Result("mm")` and check them one by one against the design coordinates.
+Read the page height from `PageSheet.CellsU("PageHeight").Result("mm")`; **don't guess it**.
 
 ---
 
-## 16. ★ 折线几何必须平移进 `[0,Width]×[0,Height]` —— 否则选中框脱离折线（2026-10-12 实坑）
+## 16. ★ Polyline geometry must be translated into `[0,Width]×[0,Height]` — otherwise the selection box detaches from the polyline (real pitfall, 2026-10-12)
 
-**症状**：在 Visio 里选中一条折线连接线，**选中框（外接框）不在折线上**，
-而是在别处出现一块透明空白矩形；拖动时图形行为也难以预测。
+**Symptoms**: in Visio, when you select a polyline connector, the **selection box (bounding box) is not on the polyline**,
+but appears elsewhere as a transparent empty rectangle; dragging behaves unpredictably too.
 
-**根因**：几何行 `Geometry1.X{n}/Y{n}` 同样活在「原点左下、Y 向上」的局部坐标里。
-折线向下/向左走时偏移为负；若直接把负偏移写进几何行，而 `Width/Height` 仍按
-`max(xs)-min(xs)` 这种「跨度」写，**形状的宽度/高度就与几何的实际范围分离** ——
-Visio 的选中框是跟着 Width/Height 算的，于是跑到 pin 的另一侧去了。
+**Root cause**: the geometry rows `Geometry1.X{n}/Y{n}` likewise live in local coordinates with "origin at the bottom-left, Y pointing up".
+When a polyline goes down/left, the offsets are negative; if you write the negative offsets straight into the geometry rows while still writing
+`Width/Height` as a "span" like `max(xs)-min(xs)`, **the shape's width/height become separated from the geometry's actual extent** —
+Visio computes the selection box from Width/Height, so it ends up on the other side of the pin.
 
-**对策**：把几何**整体平移到左下角**（页面几何位置与胶水端点完全不变），
-并按 **Visio 标准 1-D 变换**设置 `Pin`/`LocPin` —— 即 `Pin` 与 `LocPin` **都落在包围盒中心**：
+**Fix**: translate the geometry **as a whole to the bottom-left corner** (the page geometry position and the glued endpoints are completely unchanged),
+and set `Pin`/`LocPin` per the **standard Visio 1-D transform** — i.e. `Pin` and `LocPin` **both land at the bounding-box centre**:
 
 ```python
 xs = [p[0] for p in loc]; ys = [p[1] for p in loc]
-dx0, dy0 = min(xs), min(ys)                    # 几何左下角
+dx0, dy0 = min(xs), min(ys)                    # bottom-left corner of the geometry
 w, h = max(xs) - dx0, max(ys) - dy0
-self._f(conn, "LocPinX", "%.10g mm" % (w / 2.0))            # 半宽
-self._f(conn, "LocPinY", "%.10g mm" % (h / 2.0))            # 半高
-self._f(conn, "PinX", "BeginX + %.10g mm" % (dx0 + w / 2.0))  # 包围盒中心（以 Begin 为锚）
+self._f(conn, "LocPinX", "%.10g mm" % (w / 2.0))            # half width
+self._f(conn, "LocPinY", "%.10g mm" % (h / 2.0))            # half height
+self._f(conn, "PinX", "BeginX + %.10g mm" % (dx0 + w / 2.0))  # bounding-box centre (anchored on Begin)
 self._f(conn, "PinY", "BeginY + %.10g mm" % (dy0 + h / 2.0))
 self._f(conn, "Width",  "%g mm" % w)
 self._f(conn, "Height", "%g mm" % h)
-# 几何行写 (lx - dx0, ly - dy0)
+# Geometry rows write (lx - dx0, ly - dy0)
 ```
 
-★★ **不要**写成 `PinX = "=BeginX"` + `LocPinX = -dx0`（LocPin 落在包围盒**角**上）——
-那会让形状的外接框与几何范围分离。**但注意：矩形外框的真因不是它**，
-而是 `Misc.ObjType` 没设成 `2`（2026-10-13 单变量 A/B 推翻旧结论）。
-详见 **§21**（2026-10-13 实坑）。
+★★ **Don't** write it as `PinX = "=BeginX"` + `LocPinX = -dx0` (LocPin landing on a **corner** of the bounding box) —
+that separates the shape's bounding box from the geometry extent. **But note: that is not the real cause of the rectangular outline**;
+the real cause is that `Misc.ObjType` was not set to `2` (overturned by a single-variable A/B test on 2026-10-13).
+See **§21** (real pitfall, 2026-10-13).
 
-**XML 级验收**（不依赖 Visio GUI，vsdx 本身就是 zip）：
+**XML-level acceptance** (does not depend on the Visio GUI; a vsdx is itself a zip):
 
 ```python
-# ElementTree 读 visio/pages/page*.xml；★ 注意：XML 的 <Row IX="n"> 从 1 开始，
-# 且 CellsSRC 的段索引不含 component 行——用 CellsSRC 读会整体错位一行，以 XML 为准。
-# <Cell N="X1" V="0.31496"/> 的 V 是英寸，×25.4 才是 mm。
+# Read visio/pages/page*.xml with ElementTree; ★ note: XML <Row IX="n"> starts at 1,
+# and the CellsSRC section index does not include the component row — reading with CellsSRC shifts everything by one row, so use the XML.
+# In <Cell N="X1" V="0.31496"/>, V is inches; ×25.4 gives mm.
 ```
 
-判据（容差 0.02 mm）：① 所有几何行落在 `[0,Width]×[0,Height]`；② 外框四边与几何四边重合；
-③ `LocPinX/Y` 落在框内；④ 首末折点换算回页面后 = `BeginX/Y` 与 `EndX/Y`；⑤ 无斜线段（全正交时）。
+Criteria (tolerance 0.02 mm): ① all geometry rows fall inside `[0,Width]×[0,Height]`; ② the four sides of the outer box coincide with the four sides of the geometry;
+③ `LocPinX/Y` fall inside the box; ④ the first/last bend points, converted back to page coordinates, equal `BeginX/Y` and `EndX/Y`; ⑤ no diagonal segments (when fully orthogonal).
 
-**连带好处**：外接框贴合后，`Page.Export` 的裁剪边界也变小了（不再被错误外框撑大）——
-重跑图脚本后 PNG/EMF 的字节数变化属**预期**，不是内容改动。
+**Side benefit**: once the bounding box hugs the geometry, the clipping boundary of `Page.Export` also shrinks (no longer inflated by the wrong outer box) —
+so changes in PNG/EMF byte counts after re-running the figure scripts are **expected**, not content changes.
 
 ---
 
-## 17. 单条折线连接线配方（替代「多条组合线 + 不连点」）
+## 17. Recipe for a single polyline connector (replacing "several combined lines + unglued points")
 
-Visio 里用多条独立 line 拼一条连接线，端点不连 connection point，后续挪框时线不会跟着走。
-改成**单条折线连接线 + 胶到连接点**：
+In Visio, splicing a connector out of several independent lines whose endpoints are not glued to connection points means the line won't follow when you later move a box.
+Change to **a single polyline connector + glued to connection points**:
 
 ```python
-# 1) 造 1-D 形状并胶到两端的连接点
-conn = d.connect(src_shape, src_cp, dst_shape, dst_cp)      # 库已封装
-# 2) 内部覆写坐标框架，把 pin 钉在 Begin 点
+# 1) Create a 1-D shape and glue it to the connection points at both ends
+conn = d.connect(src_shape, src_cp, dst_shape, dst_cp)      # already wrapped by the library
+# 2) Internally overwrite the coordinate frame, pinning the pin to the Begin point
 #    PinX="=BeginX"  PinY="=BeginY"  Angle=0  FlipX=FlipY=0
-# 3) 几何行：段索引 10；第 1 行 MoveTo，其余 LineTo
-conn.AddRow(10, -2, 139)        # 139 = visTagLineTo；RowCount(10) 含 component 行
+# 3) Geometry rows: section index 10; row 1 is MoveTo, the rest are LineTo
+conn.AddRow(10, -2, 139)        # 139 = visTagLineTo; RowCount(10) includes the component row
 ```
 
-**两条死路（实测否决）**：`Page.Layout()` 会搬动已排好的方块（`reroute()` 置空即可，
-不要整体重排）；`pg.Drop(ConnectorToolDataObject)` 动态连接线规程下再 `AddRow` 会挂死。**
+**Two dead ends (rejected by testing)**: `Page.Layout()` moves boxes that are already placed (`reroute()` can just be emptied;
+don't re-lay out the whole thing); under the `pg.Drop(ConnectorToolDataObject)` dynamic-connector procedure, calling `AddRow` afterwards hangs.**
 
 ---
 
-## 18. ★★ 文字并入宿主形状（`merge_texts`）：把「矩形 + 独立文本框」合并成「矩形自带文本」（2026-10-12）
+## 18. ★★ Merging text into the host shape (`merge_texts`): turning "rectangle + standalone text box" into "rectangle with its own text" (2026-10-12)
 
-动机：图里大量「矩形 + 一个文本框」的组合，框本身就能写字；连接线同理自带 `Text`。
-合并后形状数可省 ~47%（实测 12 图：584 形状、302 纯文本框，其中 274 在矩形内）。
+Motivation: figures contain many "rectangle + one text box" combinations, and the box itself can hold text; connectors likewise carry their own `Text`.
+After merging, the shape count can drop by ~47% (measured across 12 figures: 584 shapes, 302 pure text boxes, of which 274 were inside rectangles).
 
-`VDraw` 默认 `default_auto_merge = True`，在 `save()`/`export()` 前自动调用
-`merge_texts()`；用环境变量 `VISIO_MERGE=0` 或类属性 `VDraw.default_auto_merge = False`
-可关闭（**用于出「未合并」对照图，逐像素回归**）。`VISIO_MERGE_DEBUG=1` 打印
-每个文本框的去向（并入哪个宿主 / 无宿主 / 线标签命中与距离）。
+`VDraw` defaults to `default_auto_merge = True`, automatically calling `merge_texts()` before `save()`/`export()`; it can be turned off with the environment variable `VISIO_MERGE=0` or the class attribute `VDraw.default_auto_merge = False`
+(**for producing "unmerged" comparison figures for pixel-by-pixel regression**). `VISIO_MERGE_DEBUG=1` prints where each text box went (which host it merged into / no host / line-label hit and distance).
 
-### 18.1 富文本写入：**不要用 `Characters.CharProps`**
+### 18.1 Writing rich text: **don't use `Characters.CharProps`**
 
-`Shape.Characters.CharProps(prop, newValue)` 的 `newValue` 在类型库里声明为**整数** →
-**8.5pt 被截成 8pt、颜色索引完全写不进**（早/晚绑定都一样）。正解是**直接写 Character 段单元格**：
+In `Shape.Characters.CharProps(prop, newValue)`, `newValue` is declared as an **integer** in the type library →
+**8.5pt gets truncated to 8pt, and colour indexes can't be written at all** (same for early/late binding). The correct approach is to **write the Character section cells directly**:
 
 ```python
-# 段索引 3 = Character；列索引：0=Font / 1=Color / 7=Size
-host.CellsSRC(3, row, 7).FormulaU = "8.5 pt"     # 字号
-host.CellsSRC(3, row, 1).FormulaU = "RGB(89,89,89)"  # 颜色
+# Section index 3 = Character; column indexes: 0=Font / 1=Color / 7=Size
+host.CellsSRC(3, row, 7).FormulaU = "8.5 pt"     # font size
+host.CellsSRC(3, row, 1).FormulaU = "RGB(89,89,89)"  # colour
 ```
 
-- **行号 ↔ 段落映射（哨兵法）**：`CharProps(7, 41 + 3*i)` 给第 i 段写唯一哨兵字号，
-  再遍历 `CellsSRC(3, r, 7).FormulaU` 反解出行号。**不要**假设「段 i = 行 i」。
-- **段前距**：`Characters.ParaProps(4, pt)`（★ 方法名是 `ParaProps`，**不是** `ParagraphProps`）。
-  作用范围是**传入范围内的所有段落** → 必须 `c.Begin = offs[i]; c.End = offs[i] + 1`
-  **只取该段首字符**，否则会把后面所有段落的段前距一起改掉。
+- **Row ↔ paragraph mapping (sentinel method)**: `CharProps(7, 41 + 3*i)` writes a unique sentinel font size for paragraph i,
+  then traverse `CellsSRC(3, r, 7).FormulaU` to work the row numbers back out. **Don't** assume "paragraph i = row i".
+- **Space before paragraph**: `Characters.ParaProps(4, pt)` (★ the method name is `ParaProps`, **not** `ParagraphProps`).
+  Its scope is **all paragraphs within the range passed in** → you must set `c.Begin = offs[i]; c.End = offs[i] + 1` to take
+  **only the first character of that paragraph**, otherwise it changes the space-before of all following paragraphs too.
 
-### 18.2 版式复原常数（实测标定，微软雅黑）
+### 18.2 Layout-restoration constants (calibrated by measurement, Microsoft YaHei)
 
 ```
-行高      LH = 0.42911·字号 − 0.0514  (mm)   ≈ 1.216×字号，残差 ≤0.1mm
-首行墨迹   文字块顶 + 上边距 + 1.02 mm        (_INK)
-真块高     n×LH + _BH_EXTRA，_BH_EXTRA = 0.52 mm
-段间推进   A ≈ LH + _ADV_BONUS，_ADV_BONUS = 0.15 mm
+Line height   LH = 0.42911·font size − 0.0514  (mm)   ≈ 1.216×font size, residual ≤0.1mm
+First-line ink  top of text block + top margin + 1.02 mm        (_INK)
+True block height  n×LH + _BH_EXTRA, _BH_EXTRA = 0.52 mm
+Inter-paragraph advance  A ≈ LH + _ADV_BONUS, _ADV_BONUS = 0.15 mm
 ```
 
-- ★★ **真块高 ≠ n×行高**：Visio 做 `VerticalAlign=1/2`（居中）时用的「文字块高」比行高累加多
-  **0.52 mm**（8.5pt 与 9.0pt 实测同值）。不补 → 整块**下移 0.26 mm**（半量）。
-  `VerticalAlign=0`（顶对齐）不用块高 → 不受影响，故**只补非 0 对齐**。
-- `_INK = 1.02` 在「块顶→首行墨迹」与「段间推进反解」中**同时出现 → 完全抵消**，
-  所以它取什么值都不影响最终结果（但两个公式里必须一致）。
-- 段间推进被 Visio **量化**（约 0.1pt ≈ 0.035mm）→ `_ADV_BONUS` 在 0.10~0.30 之间
-  几乎无差别（残差已到量化底），取 0.15 即可。
-- **实测证伪**：「块高超出可用高度时 Visio 不再居中而贴顶」——**不存在这个夹紧规则**
-  （n8 反例）。别加这个补偿。
+- ★★ **True block height ≠ n×line height**: when Visio does `VerticalAlign=1/2` (centred), the "text block height" it uses is **0.52 mm** more than the accumulated line heights
+  (same value measured at 8.5pt and 9.0pt). Without compensating, the whole block **shifts down 0.26 mm** (half the amount).
+  `VerticalAlign=0` (top-aligned) doesn't use the block height → unaffected, so **only compensate for non-0 alignment**.
+- `_INK = 1.02` appears **in both** "block top → first-line ink" and "inter-paragraph advance solved backwards" → **it cancels out completely**,
+  so whatever value it takes makes no difference to the final result (but it must be consistent in both formulas).
+- Inter-paragraph advance is **quantized** by Visio (about 0.1pt ≈ 0.035mm) → `_ADV_BONUS` anywhere in 0.10–0.30 makes
+  almost no difference (the residual is already at the quantization floor); 0.15 is fine.
+- **Disproved by measurement**: "when the block height exceeds the available height, Visio stops centring and sticks to the top" — **there is no such clamping rule**
+  (counterexample n8). Don't add that compensation.
 
-### 18.3 ★★ 根因陷阱：PIL 字体度量会把字号**取整** → 折行行数少算
+### 18.3 ★★ Root-cause trap: PIL font metrics **round the font size to an integer** → wrapped line count is under-counted
 
-`ImageFont.truetype(path, size)` 的 `size` 是**整数像素**；8.5pt 在 96dpi 下是 11.333px
-→ **被取整成 11px**，`getlength()` 随之系统性偏小 **~3%**（Pillow 12.3.0 传 float 也照样取整）。
+`ImageFont.truetype(path, size)` takes `size` as an **integer number of pixels**; 8.5pt at 96dpi is 11.333px
+→ **rounded to 11px**, so `getlength()` comes out systematically about **~3%** too small (Pillow 12.3.0 rounds even when passed a float).
 
-后果：`text_extent_mm()` 把「读时刻（时间戳计数寄存器）」13 字算成 1 行（PIL 143px <
-限度 145.13px），而 Visio 在 38.4mm 宽里实际折 **2 行** → 块高算小 4.1mm → 居中后文字下移 1.8mm。
+Consequence: `text_extent_mm()` counts the 13 characters of "读时刻（时间戳计数寄存器）" ("read time (timestamp counter register)") as 1 line (PIL 143px <
+limit 145.13px), while Visio actually wraps it into **2 lines** within 38.4mm → the block height is under-counted by 4.1mm → after centring, the text shifts down 1.8mm.
 
-**对策**：按「真实 px / 取整 px」把长度放大回真实值：
+**Fix**: scale the length back up to the true value by the ratio "true px / rounded px":
 
 ```python
 def _font_scale(size_pt, font_name="微软雅黑"):
     px = max(6, int(round(size_pt * 96.0 / 72.0)))
     return _font(size_pt, font_name), (size_pt * 96.0 / 72.0) / float(px)
-# 之后 f.getlength(...) * sc 才是真实宽度
+# Only f.getlength(...) * sc is the true width
 ```
 
-### 18.4 ★★ 连接线标签并入：局部原点**不是 Begin 点**
+### 18.4 ★★ Merging connector labels: the local origin is **not the Begin point**
 
-给 1-D 连接线写 `conn.Text = "下发"` 可行（文字出现在连接线中点），但要把文字**钉回原位**：
+Writing `conn.Text = "下发"` ("dispatch") to a 1-D connector works (the text appears at the connector's midpoint), but you have to pin the text **back to its original position**:
 
-- **`TxtPinX/TxtPinY` 用形状局部坐标**（Y 向上）。而 §17 的 `_author_path()` 会把几何
-  平移到左下角并用 `LocPin` 把 pin 拉回 Begin 点 → **局部原点 = (PinX−LocPinX, PinY−LocPinY)**，
-  **不是 Begin 点**。写 `cx − BeginX` 只在 `LocPinX=0`（向右/向下走的线）时对。
-  → 实测 图N9「上报」返程线 `Begin=(94,85.5)`、`LocPinX=18`，用 `Begin` 换算得
-  距标签 **9.86mm**（超 tol 漏并），用局部原点换算才是真实的 **5.00mm**。
-- **`TxtLocPinX` 默认 = `TxtWidth*0`**（文字块**左缘**贴文本针）→ 必须显式写
-  `TxtLocPinX = w/2`、`TxtLocPinY = h/2`，否则文字**右偏 ~2mm**。
-- `TxtAngle = 0` 保证文字始终水平（不随连线角度旋转）。
-- 命中判据：标签中心到折线的**最短距离 ≤ tol（6mm）** + **尺寸守卫**（宽 ≤44mm、高 ≤12mm）
-  → 只并「标签」，不误吞分区标题/图例/说明段。
-- 匹配前先读全部 1-D 形状的几何折线；**读行数必须用 `s.RowCount(10)`**：
-  - `s.RowCount("Geometry1")`（字符串）→ `invalid literal for int()`；
-  - 对不存在的行 `CellsU("Geometry1.X3").Result("mm")` **返回 0.0 而不抛错** →
-    「读到 None 就停」会读出一长串 (0,0) 假点（实测 180 个）。必须按行数截断。
+- **`TxtPinX/TxtPinY` use shape-local coordinates** (Y pointing up). But §17's `_author_path()` translates the geometry
+  to the bottom-left corner and uses `LocPin` to pull the pin back to the Begin point → **the local origin = (PinX−LocPinX, PinY−LocPinY)**,
+  **not the Begin point**. Writing `cx − BeginX` is only correct when `LocPinX=0` (lines going right/down).
+  → Measured: on figure N9, the "上报" ("report up") return line has `Begin=(94,85.5)`, `LocPinX=18`; converting with `Begin` gives a distance
+  from the label of **9.86mm** (over tolerance, so the merge is missed), while converting with the local origin gives the true **5.00mm**.
+- **`TxtLocPinX` defaults to `TxtWidth*0`** (the **left edge** of the text block sits on the text pin) → you must explicitly write
+  `TxtLocPinX = w/2`, `TxtLocPinY = h/2`, otherwise the text **shifts right by ~2mm**.
+- `TxtAngle = 0` keeps the text always horizontal (not rotating with the connector angle).
+- Hit criterion: the shortest distance from the label centre to the polyline **≤ tol (6mm)** + a **size guard** (width ≤44mm, height ≤12mm)
+  → only "labels" get merged, not section titles/legends/explanatory paragraphs.
+- Before matching, read the geometry polylines of all 1-D shapes; **the row count must be read with `s.RowCount(10)`**:
+  - `s.RowCount("Geometry1")` (a string) → `invalid literal for int()`;
+  - For a row that doesn't exist, `CellsU("Geometry1.X3").Result("mm")` **returns 0.0 instead of raising** →
+    "stop when you read None" yields a long string of (0,0) phantom points (180 measured in practice). You must truncate by row count.
 
-### 18.5 回归方法：`VISIO_MERGE=0/1` 逐像素对照
+### 18.5 Regression method: `VISIO_MERGE=0/1` pixel-by-pixel comparison
 
-同一脚本跑两遍（关闭/开启合并），PNG 逐像素比。**判据看「差异率」与「逐瓦片位移」**，
-不要只看整图差异率（抗锯齿会抬高底噪）：
+Run the same script twice (merge off / merge on) and compare the PNGs pixel by pixel. **Judge by "difference rate" and "per-tile displacement"**,
+not by the whole-figure difference rate alone (anti-aliasing inflates the noise floor):
 
 ```python
-# 1) 差异率：|a-b| > 60 的像素占比；12 图实测 0.27%~1.57%（底噪来自抗锯齿）
-# 2) 逐瓦片垂直互相关位移：墨迹量 ≥60 的瓦片统计 → 12 图中位 0.00px、p95 1px、最大 2px
+# 1) Difference rate: share of pixels with |a-b| > 60; measured across 12 figures 0.27%~1.57% (noise floor from anti-aliasing)
+# 2) Per-tile vertical cross-correlation displacement: tiles with ink ≥60 counted → across 12 figures median 0.00px, p95 1px, max 2px
 ```
 
-判定「版式没动」的**硬指标是逐瓦片位移**，不是差异率。残余差异来自抗锯齿与
-段前距量化（0.035mm 级），视觉不可见。
+The **hard criterion** for "the layout didn't move" is the per-tile displacement, not the difference rate. Residual differences come from anti-aliasing and
+space-before quantization (0.035mm level), and are visually invisible.
 
 ---
 
-## 19. ★ 上下相邻两框连线：端点必须取「下框 top → 上框 bottom」（2026-10-13 实坑）
+## 19. ★ For two vertically adjacent boxes, the connector endpoints must be "lower box top → upper box bottom" (real pitfall, 2026-10-13)
 
-### 19.1 症状
+### 19.1 Symptoms
 
-图 9-1 中「授时源」（下框）到「NTP 授时设备」（上框）的连接线**贯穿了整个 NTP 框**，
-箭头停在 NTP 框的**外上方**；而预期只是两框之间的一段短连线。
+In figure 9-1, the connector from "授时源" ("timing source", the lower box) to "NTP 授时设备" ("NTP timing device", the upper box) **runs through the entire NTP box**,
+with the arrow stopping **above and outside** the NTP box; the expectation was just a short connector between the two boxes.
 
-### 19.2 根因
+### 19.2 Root cause
 
 ```python
-cp["ntp"] = {"bottom": d.add_cp(b_ntp, 0.5, 1.0, diry=1),    # 下边 y=73（已定义）
-             "top":    d.add_cp(b_ntp, 0.5, 0.0, diry=-1)}   # 上边 y=56
-cp["ref"] = {"top": d.add_cp(b_ref, 0.5, 0.0, diry=-1)}       # 授时源上边 y=77
+cp["ntp"] = {"bottom": d.add_cp(b_ntp, 0.5, 1.0, diry=1),    # bottom edge y=73 (already defined)
+             "top":    d.add_cp(b_ntp, 0.5, 0.0, diry=-1)}   # top edge y=56
+cp["ref"] = {"top": d.add_cp(b_ref, 0.5, 0.0, diry=-1)}       # timing source top edge y=77
 ...
-d.connect(b_ref, cp["ref"]["top"], b_ntp, cp["ntp"]["top"])    # ← 错：终点用了上框的 top
+d.connect(b_ref, cp["ref"]["top"], b_ntp, cp["ntp"]["top"])    # ← wrong: the endpoint used the upper box's top
 ```
 
-授时源在 NTP **下方**（授时源 y 77~94，NTP y 56~73）。终点写 `b_ntp.top`（y=56）后，
-线段从 y=77 直画到 y=56 —— 中间 y∈[56,73] 恰好是 **NTP 框的内部**，于是「穿框」。
-`cp["ntp"]["bottom"]`（y=73）当时已定义却**从未使用**，正是该用的那个。
+The timing source is **below** the NTP box (timing source y 77–94, NTP y 56–73). With the endpoint written as `b_ntp.top` (y=56),
+the line runs straight from y=77 to y=56 — and y∈[56,73] in between is exactly **the inside of the NTP box**, hence "piercing the box".
+`cp["ntp"]["bottom"]` (y=73) was already defined at the time but **never used** — it was the one that should have been used.
 
-### 19.3 修法
+### 19.3 Fix
 
 ```python
-d.connect(b_ref, cp["ref"]["top"], b_ntp, cp["ntp"]["bottom"])  # 下框顶边 → 上框底边
+d.connect(b_ref, cp["ref"]["top"], b_ntp, cp["ntp"]["bottom"])  # lower box top edge → upper box bottom edge
 ```
 
-同时删掉已无用的 `cp["ntp"]["top"]` 定义（避免以后误用）。
+Also delete the now-unused `cp["ntp"]["top"]` definition (to avoid misusing it later).
 
-### 19.4 判据：选端点前先问两句话
+### 19.4 Criterion: ask two questions before choosing endpoints
 
-1. **两个框谁在上、谁在下？** 读 `step_box` 的 `ytop/h` 确认（本库 y 向下、左上原点）。
-2. **线从哪个边出、进哪个边？** 上下相邻 → 出「下框 **top**」、进「上框 **bottom**」；
-   左右相邻 → 出「左框 **right**」、进「右框 **left**」。
+1. **Which of the two boxes is on top, and which is below?** Read `step_box`'s `ytop/h` to confirm (in this library y points down, top-left origin).
+2. **Which edge does the line leave from, and which edge does it enter?** Vertically adjacent → leave from the lower box's **top**, enter the upper box's **bottom**;
+   horizontally adjacent → leave from the left box's **right**, enter the right box's **left**.
 
-★ `add_cp(s, fx, fy)` 的 **fy=0 是上边 / fy=1 是下边**（见 §15）；`"top"/"bottom"` 只是
-别名。**用 `side_cps()` 批量加四向连接点可彻底避免手写 fy 出错**：
+★ In `add_cp(s, fx, fy)`, **fy=0 is the top edge / fy=1 is the bottom edge** (see §15); `"top"/"bottom"` are just aliases.
+**Adding four-way connection points in bulk with `side_cps()` avoids hand-writing fy wrong altogether**:
 
 ```python
 cp = d.side_cps(b_ntp, "top bottom")   # → cp["top"] / cp["bottom"]
 ```
 
-### 19.5 验证三件套
+### 19.5 Verification trio
 
-- 重跑图脚本 → PNG 尺寸与改前**一致**（755×536，内容包围盒未变）、`[文字溢出] 无`
-- 重跑管线 → **图幅偏差 `1.408 vs 1.409 / 0.096%` 与改前逐字一致** → 嵌入图框尺寸不受影响
-- **从最终 PDF 渲染该页目视复核**（Word 会把 OLE 渲染进 PDF）—— 这是最可靠的确认方式
+- Re-run the figure script → PNG dimensions **unchanged** from before (755×536, content bounding box unchanged), `[text overflow] none`
+- Re-run the pipeline → **figure size deviation `1.408 vs 1.409 / 0.096%`, identical to before, character for character** → embedded figure frame size unaffected
+- **Visually re-check that page in the final PDF rendering** (Word renders the OLE into the PDF) — this is the most reliable confirmation
 
 ---
 
-## 20. ★★ 连接线**自带文本**：`d.connect(..., label=...)`（2026-10-13 实坑 ×3）
+## 20. ★★ Connectors' **own text**: `d.connect(..., label=...)` (real pitfall ×3, 2026-10-13)
 
-### 20.0 为什么要这么做
+### 20.0 Why do this
 
-「矩形 + 独立文本框」做连线标签时，**选中标签会画出一个大矩形框**（2-D 形状的选中框），
-且拖动连线时标签不跟随。**1-D 连接线自带文本**则只显示两端手柄、随线移动。
+When a connector label is made as "rectangle + standalone text box", **selecting the label draws a big rectangular box** (the selection box of a 2-D shape),
+and the label doesn't follow when you drag the connector. A **1-D connector's own text**, by contrast, shows only the two end handles and moves with the line.
 
-判据（读 vsdx 即可区分）：
+Criterion (readable from the vsdx alone):
 
 ```python
 c = {x.get('N'): x.get('V') for x in shape.findall(NS+'Cell')}
-one_d = 'BeginX' in c          # True = 1-D 连接线（自带文本）；False = 2-D 文本框
+one_d = 'BeginX' in c          # True = 1-D connector (own text); False = 2-D text box
 ```
 
-### 20.1 用法
+### 20.1 Usage
 
 ```python
 d.connect(b_srv, cp["srv"]["r44"], b_sw, cp["sw"]["l44"],
           label="双 10GE", label_color="gray", label_pos=(60, 49.5))
 ```
 
-- `label_pos=(x, y)` 是**文字中心**的页坐标（mm，左上原点、Y 向下）；
-  省略则取折线包围盒中心。
-- `label_align` 默认 1（居中）、`label_size` 默认 7pt、`label_color` 默认随线色。
+- `label_pos=(x, y)` is the **text centre** in page coordinates (mm, top-left origin, Y pointing down);
+  if omitted, the polyline bounding-box centre is used.
+- `label_align` defaults to 1 (centred), `label_size` defaults to 7pt, `label_color` defaults to the line colour.
 
-> ★★ **`label_pos` 已废弃，别再用**（2026-10-13 定案，见 §23）：绝对页坐标**不随线移动**，
-> 一改布局标签就集体漂离线。改用 **`label_at` / `label_gap` / `label_side`** 沿线相对定位：
+> ★★ **`label_pos` is deprecated — don't use it any more** (decided 2026-10-13, see §23): absolute page coordinates **don't move with the line**,
+> so one layout change makes all the labels drift off their lines together. Use **`label_at` / `label_gap` / `label_side`** for along-the-line relative positioning instead:
 >
 > ```python
 > d.connect(b_srv, cp["srv"]["r44"], b_sw, cp["sw"]["l44"],
@@ -671,571 +671,570 @@ d.connect(b_srv, cp["srv"]["r44"], b_sw, cp["sw"]["l44"],
 >           label_at=0.5, label_gap=2.2, label_side="up")
 > ```
 
-### 20.2 坑一：写 `Control.TextPosition` 会让文字**跳位并随线旋转**
+### 20.2 Pitfall 1: writing `Control.TextPosition` makes the text **jump and rotate with the line**
 
-Visio 原生「动态连接线」确实带 `Control.TextPosition` 命名行，但用 COM 按**形状局部坐标**
-写入时，Visio 把它当**页面坐标**解释：
+Visio's native "dynamic connector" does carry a named row `Control.TextPosition`, but when you write it via COM in **shape-local coordinates**,
+Visio interprets it as **page coordinates**:
 
 ```python
-# ✗ 不要这样写
+# ✗ Don't write it like this
 r = c.AddNamedRow(9, "TextPosition", 0)
-c.CellsSRC(9, r, 0).FormulaU = "%g mm" % tx     # tx 是局部坐标 → 被当页面坐标
+c.CellsSRC(9, r, 0).FormulaU = "%g mm" % tx     # tx is a local coordinate → interpreted as a page coordinate
 c.CellsSRC(9, r, 1).FormulaU = "%g mm" % ty
 ```
 
-症状：标签跳到别处、且方向随连接线走向旋转。**只设 `TxtPin/TxtLocPin/TxtAngle` 即可**。
+Symptoms: the label jumps somewhere else, and its direction rotates with the connector's direction. **Just set `TxtPin/TxtLocPin/TxtAngle`**.
 
-### 20.3 坑二：短标签被挤成「一字一行」
+### 20.3 Pitfall 2: short labels get squeezed into "one character per line"
 
-连接线文本块**默认带左右页边距**（约 1.27mm/侧）→ 实际可用宽度比 `TxtWidth` 小 ~2.5mm。
-实测：「授时」`TxtWidth=7.34mm`（文本实需 4.94mm）仍**逐字换行**；「双 10GE」`TxtWidth=11.73mm`
-（实需 8.97mm）却单行 —— 差值 2.5mm 就是页边距。
+A connector's text block **carries left/right page margins by default** (about 1.27mm per side) → the actually usable width is ~2.5mm less than `TxtWidth`.
+Measured: "授时" ("timing") with `TxtWidth=7.34mm` (text actually needs 4.94mm) still **wrapped character by character**; "双 10GE" ("dual 10GE") with `TxtWidth=11.73mm`
+(actually needs 8.97mm) stayed on one line — the 2.5mm difference is the page margins.
 
 ```python
-self._f(c, "LeftMargin", "0 mm")      # ★ 必须清零
+self._f(c, "LeftMargin", "0 mm")      # ★ must be zeroed
 self._f(c, "RightMargin", "0 mm")
-self._f(c, "TxtWidth", "%g mm" % tw)  # 另留 4.5mm 余量（原 2.4mm 不够）
+self._f(c, "TxtWidth", "%g mm" % tw)  # also leave 4.5mm of slack (the original 2.4mm wasn't enough)
 ```
 
-### 20.4 坑三：**不要**为了「多救几个标签」放宽 `_merge_line_labels` 的启发式
+### 20.4 Pitfall 3: **don't** loosen the `_merge_line_labels` heuristic "to rescue a few more labels"
 
-曾把 `max_w` 由 44 放宽到 60、把距离判据改成「框内离折线最近点」、并让「约束不一致」的
-分组回退成连线标签候选。结果 `best.Text = t` 是**覆盖**写入 —— **多个文本框并到同一条
-连接线时，后面的覆盖前面的**，图 8-1 的「输出文件复制回本机（回导）」整条文字**丢失**。
+At one point `max_w` was loosened from 44 to 60, the distance criterion was changed to "closest point on the polyline inside the box", and groups with "inconsistent constraints"
+were allowed to fall back to connector-label candidates. The result: `best.Text = t` is an **overwriting** write — **when several text boxes merge onto the same connector,
+the later ones overwrite the earlier ones**, and the whole text "输出文件复制回本机（回导）" ("copy the output file back to this machine (re-import)") in figure 8-1 was **lost**.
 
-★ 正确做法：**要连线自带文本就显式传 `label=`**（§20.1），不要靠启发式猜。
-启发式保持原状（`max_w=44.0`、中心距判据、不回退）。
+★ The correct approach: **to give a connector its own text, pass `label=` explicitly** (§20.1); don't rely on heuristic guessing.
+Keep the heuristic as it was (`max_w=44.0`, centre-distance criterion, no fallback).
 
-### 20.5 落地检查清单
+### 20.5 Landing checklist
 
-1. 跑图脚本 → 输出 `[文字溢出] 无`。
-2. 读 vsdx：每个标签所在形状 `1D=True`。
-3. 目视 PNG：**单行、水平**、落位与 `label_pos` 一致。
-   ★ 量图别用「PNG 宽 / 页面宽」当比例 —— `Page.Export` 按**内容包围盒**裁剪，
-   且包围盒用的是 `Pin ± Width/2`（折线形状的 LocPin 常不在中心）→ 比例会算错。
-   稳妥做法：从已知图元的像素跨度反推 px/mm。
-4. 重跑全量管线 → `verify_final` 全绿（图幅偏差 ≤0.1%）。
-5. **回归另 4 张用同一库的图**（PNG 逐字节比对；`page1.xml` 逐字节比对；
-   EMF 只看 `rclFrame` 的**宽高比**，绝对尺寸受会话/设备影响、不可比）。
+1. Run the figure script → output `[text overflow] none`.
+2. Read the vsdx: every label's shape has `1D=True`.
+3. Visually check the PNG: **single line, horizontal**, placed consistently with `label_pos`.
+   ★ Don't use "PNG width / page width" as the scale when measuring a figure — `Page.Export` crops by the **content bounding box**,
+   and the bounding box uses `Pin ± Width/2` (a polyline shape's LocPin is often not at the centre) → the scale comes out wrong.
+   The safe approach: work the px/mm back out from the pixel span of a known shape.
+4. Re-run the full pipeline → `verify_final` all green (figure size deviation ≤0.1%).
+5. **Regress the other 4 figures that use the same library** (byte-for-byte PNG comparison; byte-for-byte `page1.xml` comparison;
+   for EMF, only look at the `rclFrame` **aspect ratio** — absolute dimensions are affected by the session/device and can't be compared).
 
 ---
 
-## 21. ★★★ 折线选中时出现**矩形外框** —— 根因是 `ObjType`（2026-10-13 定位并修复）
+## 21. ★★★ A **rectangular outline** appears when a polyline is selected — the root cause is `ObjType` (located and fixed 2026-10-13)
 
-**症状**：选中我们生成的折线连接线时，**沿包围盒画出一圈矩形外框**；
-而手工在 Visio 里画的折线（原生 Dynamic connector）选中时**只有端点圆点 + 折点小方块**，
-没有任何矩形。用户明确报「折线选中时依然出现了矩形框，和手绘折线效果不一致」。
+**Symptoms**: when you select a polyline connector we generated, a **rectangular outline is drawn around its bounding box**;
+whereas a polyline drawn by hand in Visio (a native Dynamic connector) shows **only endpoint dots + small bend-point squares** when selected,
+with no rectangle at all. The user reported explicitly: "the rectangular box still appears when the polyline is selected; it doesn't match the hand-drawn polyline effect".
 
-**★ 根因 = `Misc.ObjType`**（单变量 A/B 逐项二分，9 组对照）：
-`ObjType` 默认 `0`（由 Visio 自行判断）→ 形状被按普通 2-D 形状渲染，选中即画包围盒。
-原生 Dynamic connector 是 **`ObjType = 2`**（`visLOFlagsRoutable`，
-「可布线，必须是 1-D 形状」，见 MS 文档 *ObjType Cell, Miscellaneous Section*）
-→ 选中只显示端点圆点 + 折点小方块。
+**★ Root cause = `Misc.ObjType`** (single-variable A/B elimination, 9 control groups):
+With the default `ObjType` of `0` (Visio decides for itself) → the shape is rendered as an ordinary 2-D shape, and selecting it draws the bounding box.
+A native Dynamic connector has **`ObjType = 2`** (`visLOFlagsRoutable`,
+"routable, must be a 1-D shape", see the MS documentation *ObjType Cell, Miscellaneous Section*)
+→ selecting it shows only endpoint dots + bend-point squares.
 
-| 变体（几何完全相同） | 选中时 |
+| Variant (identical geometry) | When selected |
 |---|---|
-| V0 基线（`ObjType=0`） | **矩形外框** ❌ |
-| V1 **仅**加 `ObjType=2` | **无矩形** ✅ |
-| V2/V3/V4/V5/V7（`+LockCalcWH` / `+LockHeight` / `+ConFixedCode` / `+LayerMember` / `+TxtPin`，仍 `ObjType=0`） | 都有矩形 ❌ |
-| V8 全加（含 `ObjType=2`） | 无矩形 ✅ |
-| REF Visio 原生 Dynamic connector（`ObjType=2`） | 无矩形 ✅ |
+| V0 baseline (`ObjType=0`) | **Rectangular outline** ❌ |
+| V1 **only** adding `ObjType=2` | **No rectangle** ✅ |
+| V2/V3/V4/V5/V7 (`+LockCalcWH` / `+LockHeight` / `+ConFixedCode` / `+LayerMember` / `+TxtPin`, still `ObjType=0`) | All have a rectangle ❌ |
+| V8 all added (including `ObjType=2`) | No rectangle ✅ |
+| REF Visio native Dynamic connector (`ObjType=2`) | No rectangle ✅ |
 
-**⚠ 与 ShapeTransform 无关（早期结论有误，已推翻）**：
-`LocPin=包围盒中心` 与 `LocPin=包围盒角` 两种写法**都出矩形**
-（放大复核 `th_T1_old_zoom.png` / `th_T2_new_zoom.png`，两者都有框，只是手柄数量不同）。
-`PinX=BeginX + 常量`（中心）写法仍保留 —— 它与 Visio 原生约定一致，无害。
+**⚠ Unrelated to ShapeTransform (the earlier conclusion was wrong and has been overturned)**:
+Both `LocPin=bounding-box centre` and `LocPin=bounding-box corner` **produce a rectangle**
+(verified by zooming in on `th_T1_old_zoom.png` / `th_T2_new_zoom.png`; both have a box, only the handle count differs).
+The `PinX=BeginX + constant` (centre) form is still kept — it matches Visio's native convention and is harmless.
 
-### 正解（已落地 `visio_lib._author_path`）：**顺序敏感，务必照抄**
+### The correct solution (already in `visio_lib._author_path`): **order-sensitive, copy it exactly**
 
 ```python
-# ① 先按「包围盒中心」把变换 + 几何写对
+# ① First write the transform + geometry correctly per "bounding-box centre"
 self._write_geom(conn, [(lx - dx0, ly - dy0) for lx, ly in loc])
-# ② 先锁死布线，再认作「可布线 1-D 形状」
+# ② First lock the routing, then declare it a "routable 1-D shape"
 self._f(conn, "ConFixedCode", "3")
 self._f(conn, "ObjType", "2")
-# ③ 按 Visio 接管后的「真实」局部原点重写几何
+# ③ Rewrite the geometry against the "true" local origin after Visio takes over
 ox = conn.CellsU("PinX").Result("mm") - conn.CellsU("LocPinX").Result("mm")
 oy = conn.CellsU("PinY").Result("mm") - conn.CellsU("LocPinY").Result("mm")
 self._write_geom(conn, [(bx + lx - ox, by + ly - oy) for lx, ly in loc])
 ```
 
-**三个必须知道的副作用**：
+**Three side effects you must know**:
 
-1. **设 `ObjType=2` 会触发 Visio 布线引擎立即接管**：把 ShapeTransform 重写成原生约定
-   `PinX=GUARD((BeginX+EndX)/2)`、`LocPinX=GUARD(Width*0.5)`、
-   `Width=GUARD(EndX-BeginX)`、`Height=GUARD(EndY-BeginY)`，并**丢弃自写几何**
-   （实测 5 点被换成 3 点自动路由）→ 必须**在其后**重写几何。
-2. **`ConFixedCode` 必须写在 `ObjType` 之前**。顺序反了，Visio 会在随后的重算里
-   **再次重布**：实测同一条横线，`ObjType→写几何→ConFixedCode` 得 6 点自动路由；
-   `ConFixedCode→ObjType→写几何` 得精确 4 点。
-3. **Visio 会把不足 0.25 in 的边夹取到 ±0.25 in**（横线 Height、竖线 Width、零长线两向）
-   → 局部原点 `(PinX−LocPinX, PinY−LocPinY)` **≠ Begin 点**（实测横线偏 3.175 mm）。
-   故**必须回读原点**，不能按 Begin 推算。
+1. **Setting `ObjType=2` triggers Visio's routing engine to take over immediately**: it rewrites the ShapeTransform to the native convention
+   `PinX=GUARD((BeginX+EndX)/2)`, `LocPinX=GUARD(Width*0.5)`,
+   `Width=GUARD(EndX-BeginX)`, `Height=GUARD(EndY-BeginY)`, and **discards the hand-written geometry**
+   (measured: 5 points replaced by 3-point automatic routing) → you must rewrite the geometry **after** it.
+2. **`ConFixedCode` must be written before `ObjType`**. Reversed, Visio will **re-route again** during the subsequent recalculation:
+   measured on the same horizontal line, `ObjType→write geometry→ConFixedCode` gives 6-point automatic routing;
+   `ConFixedCode→ObjType→write geometry` gives the exact 4 points.
+3. **Visio clamps any edge shorter than 0.25 in to ±0.25 in** (horizontal lines' Height, vertical lines' Width, both directions for zero-length lines)
+   → the local origin `(PinX−LocPinX, PinY−LocPinY)` **≠ the Begin point** (measured: a horizontal line off by 3.175 mm).
+   So you **must read the origin back**; don't derive it from Begin.
 
-### 短形状 / 自由端会**在存盘后被改坏** → 自愈回退
+### Short shapes / free ends get **broken after saving** → self-healing fallback
 
-`ObjType=2` 对**很短**的连接线（图 N10 时间刻度线 2.7 mm、箭头 5 mm）与
-**有一端是自由点**的线（图 N8 引出线）会被 Visio 的 1-D 最小尺寸夹取改坏
-（刻度线实测被缩到 0.475 mm；图 N8 被加出斜段）。
-★ 这种改坏**发生在 `SaveAs` 之后**，写入当时读回是正常的 → **当场校验抓不到**。
+For **very short** connectors (`ObjType=2` on figure N10's time tick marks at 2.7 mm, arrows at 5 mm) and lines with
+**one free end** (figure N8's leader lines), Visio's 1-D minimum-size clamping breaks them
+(tick marks measured as shrunk to 0.475 mm; figure N8 gained a diagonal segment).
+★ This breakage happens **after `SaveAs`**, while a read-back right after writing looks normal → **on-the-spot validation can't catch it**.
 
-`visio_lib.connect()` 的两道防线：
+The two lines of defence in `visio_lib.connect()`:
 
 ```python
 free_end = isinstance(ia, tuple) or isinstance(ib, tuple)
 if free_end:
-    self._author_path(c, via, objtype=False)      # ① 自由端直接不加 ObjType
+    self._author_path(c, via, objtype=False)      # ① free end: don't add ObjType at all
 elif not self._author_path(c, via, objtype=True):
-    c.Delete(); c = build()                        # ② 当场校验不合格 → 删除重建
+    c.Delete(); c = build()                        # ② on-the-spot validation fails → delete and rebuild
     self._author_path(c, via, objtype=False)
 ```
 
-代价：这些线选中时仍显示包围盒（图例线 / 刻度 / 箭头 / 总线引出）。
-**图形正确优先** —— 渲染必须逐字节不变。
+Cost: these lines still show a bounding box when selected (legend lines / ticks / arrows / bus leaders).
+**Graphical correctness comes first** — rendering must be byte-for-byte unchanged.
 
-### 验收要点（本项目实测，2026-10-13）
+### Acceptance points (measured on this project, 2026-10-13)
 
-- 12 张图重跑：**10 张 PNG 逐字节相同**，另 2 张**差异像素 0**；
-  12 张 EMF `rclFrame` 纵横比偏差 **0.000%**。
-- `ObjType=2` 共 **79 条**连接线（= 全部两端胶水的连接线）；
-  `ObjType=0` 52 条（= 全部自由端线）。自愈回退触发 **0 次**。
-- 交付件内嵌 `word/embeddings/*.vsdx` 中 `ObjType=2` 也是 **79 处**
-  → 确认 OLE 内容已随源刷新，不是嵌的旧图。
+- Re-running 12 figures: **10 PNGs byte-for-byte identical**, the other 2 with **0 differing pixels**;
+  EMF `rclFrame` aspect-ratio deviation across 12 figures **0.000%**.
+- `ObjType=2` on **79** connectors in total (= all connectors glued at both ends);
+  `ObjType=0` on 52 lines (= all free-end lines). Self-healing fallback triggered **0 times**.
+- In the deliverable, the embedded `word/embeddings/*.vsdx` files also contain `ObjType=2` in **79 places**
+  → confirming the OLE content was refreshed along with the source, not an old embedded figure.
 
-### 怎么截「选中态」做验证
+### How to capture the "selected state" for verification
 
-用 `PrintWindow(hwnd, hdc, 2)`（`PW_RENDERFULLCONTENT`）—— 它能渲染**被遮挡**的窗口，
-比 `ImageGrab` 可靠；配合 `win.CenterViewOnShape(shape, 0)` 把目标居中，
-再按**客户区中心**（`GetClientRect` + `ClientToScreen`；`PrintWindow` 输出是窗口坐标）裁剪。
-★ `IVWindow` 没有 `CenterViewOn`，只有 `CenterViewOnShape(Shape, Flags)`。
+Use `PrintWindow(hwnd, hdc, 2)` (`PW_RENDERFULLCONTENT`) — it can render an **occluded** window,
+which is more reliable than `ImageGrab`; combine it with `win.CenterViewOnShape(shape, 0)` to centre the target,
+then crop by the **client-area centre** (`GetClientRect` + `ClientToScreen`; `PrintWindow` output is in window coordinates).
+★ `IVWindow` has no `CenterViewOn`, only `CenterViewOnShape(Shape, Flags)`.
 
 ---
 
-## 22. ★ 图例 `legend()` 忽略 `w` → 整行越出画布，导出后右侧凭空多出一大片空白（2026-10-13 实坑）
+## 22. ★ The legend `legend()` ignores `w` → the whole row runs off the canvas, and a large blank area appears on the right after export (real pitfall, 2026-10-13)
 
-**症状**：图上「主绘图区」显得偏窄，右侧一大片空白；图例各条目间距悬殊、最后一条挤到很远。
-用户原话：「图主要区域 width 比图例小，导致右侧很多空白区域」。
+**Symptoms**: the "main drawing area" in the figure looks narrow, with a large blank area on the right; the legend entries are spaced unevenly, with the last one squeezed far away.
+The user's own words: "the main area's width is smaller than the legend's, leaving a lot of blank space on the right".
 
-**根因**：`legend()` 的 `w` 形参**从未被使用** —— 每个条目的文字框**硬编码 46mm**：
+**Root cause**: `legend()`'s `w` parameter was **never used** — each entry's text box was **hard-coded to 46mm**:
 
 ```python
-self.text(cx + lw_ + 1.5, y - 2.6, 46, 5.2, label, ...)   # ← 46 写死
-cx += lw_ + 1.5 + 46 + gap                                # 每条 +79.5mm
+self.text(cx + lw_ + 1.5, y - 2.6, 46, 5.2, label, ...)   # ← 46 hard-coded
+cx += lw_ + 1.5 + 46 + gap                                # each entry +79.5mm
 ```
 
-3 个条目从 `x=6` 起 → 终点 ≈ `6 + 3×79.5 = 238.5mm`，**远超 170mm 画布**。
-而 `Page.Export` 是**按内容边界裁剪**（不是按页面）→ 把越界的图例也裁进图里，
-于是主绘图区（6..166）只占画面左侧 ~2/3，右侧 1/3 是「图例文字 + 空白」。
+3 entries starting at `x=6` → the end lands at ≈ `6 + 3×79.5 = 238.5mm`, **far beyond the 170mm canvas**.
+And `Page.Export` crops **by content bounds** (not by page) → the overflowing legend is cropped into the figure too,
+so the main drawing area (6..166) occupies only about the left 2/3 of the image, with the right 1/3 being "legend text + blank space".
 
-**修法**：让 `legend()` 真正按 `w` **均匀分布**（整行自 `x` 起、到 `x+w` 止）：
+**Fix**: make `legend()` actually distribute evenly by `w` (the whole row runs from `x` to `x+w`):
 
 ```python
 n = len(items)
-cell = (w - gap * (n - 1)) / n          # 每格宽
-tw   = max(6.0, cell - lw_ - 1.5)       # 文字框宽（不再写死 46）
-# 每条：线样 cx..cx+lw_，文字 cx+lw_+1.5，然后 cx += cell + gap
+cell = (w - gap * (n - 1)) / n          # width of each cell
+tw   = max(6.0, cell - lw_ - 1.5)       # text box width (no longer hard-coded 46)
+# Each entry: line sample cx..cx+lw_, text at cx+lw_+1.5, then cx += cell + gap
 ```
 
-传 `w <= 0` 时退化为旧的固定顺排（线样 26 + 文字 46 + gap）。
+When `w <= 0` is passed, it falls back to the old fixed sequential layout (line sample 26 + text 46 + gap).
 
-**向后兼容（重要）**：`图8_1` 原先传 `w=88` —— 小于它的自然宽度 153，
-但旧版忽略 `w` 所以无碍。改成新语义后必须把 `w` 改成它的**真实占用宽 153**，
-否则图例会缩到 6..94、文字换行。实测改后 **PNG 与 `page1.xml` 的 sha1 均逐字节不变**。
-`图9_1` 改传 `w=160`（与内容区 6..166 同宽）。
+**Backward compatibility (important)**: `图8_1` ("Figure 8_1") previously passed `w=88` — less than its natural width of 153,
+but the old version ignored `w`, so it didn't matter. With the new semantics, `w` must be changed to its **true occupied width of 153**,
+otherwise the legend shrinks to 6..94 and the text wraps. After the change, the **PNG and `page1.xml` sha1 were both byte-for-byte unchanged**.
+`图9_1` ("Figure 9_1") now passes `w=160` (same width as the content area 6..166).
 
-**排查手法**：解析 vsdx，算每个形状的 `PinX ± Width/2`（单位是**英寸**，×25.4 得 mm），
-看最右形状是否超过「画布宽 − 边距」。超了多半就是图例 / 长文本框越界，
-而不是主绘图区真的窄 —— 别被「按内容裁剪」的导出骗了。
+**How to investigate**: parse the vsdx, compute each shape's `PinX ± Width/2` (the unit is **inches**; ×25.4 gives mm),
+and see whether the rightmost shape exceeds "canvas width − margin". If it does, it's most likely the legend / a long text box overflowing,
+not the main drawing area really being narrow — don't be fooled by the "crop by content" export.
 
-## 23. ★★ 连接线标签「离老远」—— 通用病：绝对坐标 + 包围盒中心兜底（2026-10-13 实坑）
+## 23. ★★ Connector labels "far away from the line" — a general disease: absolute coordinates + bounding-box-centre fallback (real pitfall, 2026-10-13)
 
-**症状**：用户原话「9.1 连接线上的文本离连接线距离太远，**这可以是一个通用问题**」。
-不是 图 9-1 的偶发，而是两条通用路径都有病。
+**Symptoms**: the user's own words: "in 9.1, the text on the connector is too far from the connector — **this can be a general problem**".
+It wasn't a one-off in figure 9-1; both general paths were broken.
 
-**根因（三条）**：
+**Root causes (three)**:
 
-1. **`label_pos=(x, y)` 是绝对页坐标，不随线移动。** 改一次布局（列宽 / 间距）
-   全部标签集体漂离线 —— 图 9-1 实测偏出 **11~14mm**，还压到邻框、跨过泳道虚线边框。
-2. **`label_pos=None` 的兜底是取折线「包围盒中心」。** 肘形线的包围盒中心常常
-   **根本不在线上**（4 段肘线的中心往往落进空白三角区）。
-3. **并入路径**（`_merge_line_labels`）把标签钉在**作者摆放的位置**，原样保留偏移：
-   `VISIO_MERGE_DEBUG=1` 实测 fig_n8「生成/供」**5.0/5.5mm**、fig_n9 三条 **5.0mm**、
-   fig_n10「周期开始/时间 →」**3.5mm** —— 看着像一段独立说明，而不像连接线标签。
+1. **`label_pos=(x, y)` is an absolute page coordinate that doesn't move with the line.** One layout change (column width / spacing)
+   makes all the labels drift off their lines together — figure 9-1 measured **11–14mm** off, even pressing onto neighbouring boxes and crossing the dashed lane borders.
+2. **The fallback for `label_pos=None` takes the polyline's "bounding-box centre".** For an elbow-shaped line, the bounding-box centre often
+   **isn't on the line at all** (the centre of a 4-segment elbow often falls in an empty triangular area).
+3. **The merge path** (`_merge_line_labels`) pins the label at **the position the author placed it**, preserving the offset as-is:
+   `VISIO_MERGE_DEBUG=1` measured fig_n8 "生成/供" ("generate/supply") at **5.0/5.5mm**, three labels in fig_n9 at **5.0mm**,
+   and fig_n10 "周期开始/时间 →" ("cycle start / time →") at **3.5mm** — they read like standalone notes, not connector labels.
 
-**修法 A —— `connect()` 显式标签：改成「沿线相对定位」**（★ 推荐，永远别手写绝对坐标）：
+**Fix A — explicit labels in `connect()`: switch to "relative positioning along the line"** (★ recommended; never hand-write absolute coordinates):
 
 ```python
-d.connect(a, cpa, b, cpb, label="组播")                 # 默认：最长段中点 + 横→上/竖→左 偏 2.2mm
-d.connect(a, cpa, b, cpb, label="组播", label_at=(2, .5))  # 指定第 3 段中点
-d.connect(a, cpa, b, cpb, label="组播", label_at=0.35)     # 全线弧长 35% 处
+d.connect(a, cpa, b, cpb, label="组播")                 # default: midpoint of the longest segment + offset 2.2mm up for horizontal / left for vertical
+d.connect(a, cpa, b, cpb, label="组播", label_at=(2, .5))  # midpoint of the 3rd segment
+d.connect(a, cpa, b, cpb, label="组播", label_at=0.35)     # at 35% of the whole polyline's arc length
 d.connect(a, cpa, b, cpb, label="组播", label_side="down", label_gap=2.6)
 ```
 
-| 参数 | 含义 |
+| Parameter | Meaning |
 |---|---|
-| `label_at=None` | 自动取**最长一段**的中点（最稳：线段最长、两侧最空） |
-| `label_at=float` | 按整条折线**弧长比例**取点（0=起点，1=终点） |
-| `label_at=(i, f)` | 第 `i` 段（0 起）内按比例 `f` 取点 —— **绕开障碍物**用它 |
-| `label_gap` | 文字**中心**到线段的垂距 mm（默认 2.2） |
-| `label_side` | `None/'auto'` 按走向自选（横线段→**上**、竖线段→**左**）；`'up'/'down'/'left'/'right'/'on'` 强制 |
-| `label_pos` | 绝对页坐标，**不随线移动**；仅确需精确定位时用，用后必须肉眼看成品 |
+| `label_at=None` | Automatically take the **longest segment's** midpoint (most stable: longest segment, emptiest on both sides) |
+| `label_at=float` | Take a point by **arc-length proportion** along the whole polyline (0=start, 1=end) |
+| `label_at=(i, f)` | Take a point at proportion `f` within segment `i` (0-based) — use this to **get around obstacles** |
+| `label_gap` | Perpendicular distance in mm from the text **centre** to the segment (default 2.2) |
+| `label_side` | `None/'auto'` auto-selects by direction (horizontal segment→**up**, vertical segment→**left**); `'up'/'down'/'left'/'right'/'on'` forces it |
+| `label_pos` | Absolute page coordinates, **don't move with the line**; use only when precise positioning is really needed, and visually check the finished product afterwards |
 
-锚点取在**线段上**、再沿法向偏 `gap`，因此「文字↔线」距离恒定、且随连接线一起动；
-布局改了标签自动跟着走。
+The anchor point sits **on the segment**, then offsets by `gap` along the normal, so the "text↔line" distance stays constant and moves with the connector;
+when the layout changes, the labels follow automatically.
 
-**修法 B —— 并入路径：贴线归一**。并入时**保持「沿线位置」和「左右侧」不变**，
-只把「**字形**到线的距离」收敛到 `LBL_GAP = 0.8mm`：
+**Fix B — merge path: snap to the line**. When merging, **keep the "position along the line" and the "left/right side" unchanged**,
+and only converge the "**glyph**-to-line distance" to `LBL_GAP = 0.8mm`:
 
 ```python
-nd, si, npt, dv = _poly_near(bpts, cx, cy)     # 最近点 + 所在段方向
-u = (cx-npt)/bd                                # 原来偏向哪一侧，就还偏哪侧
-reach = a*b / sqrt((b*ux)^2 + (a*uy)^2)        # 轴对齐块沿 u 的中心→近边距
-cx, cy = npt + u * (LBL_GAP + reach)           # 字形近边离线 0.8mm
+nd, si, npt, dv = _poly_near(bpts, cx, cy)     # nearest point + direction of the segment it's on
+u = (cx-npt)/bd                                # whichever side it was offset to, keep it on that side
+reach = a*b / sqrt((b*ux)^2 + (a*uy)^2)        # centre→near-edge distance of the axis-aligned block along u
+cx, cy = npt + u * (LBL_GAP + reach)           # near edge of the glyph 0.8mm from the line
 ```
 
-字形盒 `(gw, gh)` 由源文本框的字号 + 行数估（`_lh` 行高 + PIL 字宽度量），
-不是用文本框的 `w/h`（含左右页边距，会把标签推得过远）。
+The glyph box `(gw, gh)` is estimated from the source text box's font size + line count (`_lh` line height + PIL font width measurement),
+not from the text box's `w/h` (which includes left/right page margins and would push the label too far away).
 
-**两条配套经验（改完必须肉眼看成品）**：
+**Two supporting lessons (you must visually check the finished product after changing)**:
 
-1. **竖线段的 `label_gap` 必须 > 半字宽**：2 字标签半字宽 ≈ 2.47mm，默认 2.2 会
-   **蹭到字右缘 0.3mm**（图 9-1「授时」实测）；4 字标签（「授时信号」）要 3.0mm 以上。
-2. **自动侧会撞邻块 / 边框**：图 9-1「组播」放竖段左侧 → 跨过泳道虚线边框 x=122，
-   改用 `label_at=(2, .5)` 落到**末段横线上方**才避开。走廊窄时就换段、换侧，
-   别硬调 `label_gap`。
+1. **A vertical segment's `label_gap` must be > half the character width**: a 2-character label's half-width is ≈ 2.47mm, so the default 2.2
+   **catches the right edge of the character by 0.3mm** (measured on figure 9-1 "授时" ("timing")); a 4-character label ("授时信号" ("timing signal")) needs 3.0mm or more.
+2. **The automatic side can hit a neighbouring block / border**: in figure 9-1, "组播" ("multicast") placed on the left of a vertical segment → it crossed the dashed lane border at x=122,
+   and only switching to `label_at=(2, .5)` to land it **above the final horizontal segment** avoided it. When the corridor is narrow, change segment or side;
+   don't force it by tuning `label_gap`.
 
-**排查手法**：
-- 并入路径：`VISIO_MERGE_DEBUG=1` 会打印每个线标签的「原始距离 → 贴线后距离 + 字形尺寸」。
-- 显式路径：解析 vsdx 读该形状的 `TxtPinX/TxtPinY`，配合 `PinX−LocPinX` 反算文字中心，
-  与 `_line_page_pts()` 的折线点列比距离（超 3mm 就是漂了）。
+**How to investigate**:
+- Merge path: `VISIO_MERGE_DEBUG=1` prints each line label's "original distance → distance after snapping + glyph dimensions".
+- Explicit path: parse the vsdx to read the shape's `TxtPinX/TxtPinY`, work the text centre back out with `PinX−LocPinX`,
+  and compare its distance against the polyline points from `_line_page_pts()` (more than 3mm off means it has drifted).
 
-**验收（本项目 12 图回归）**：仅 fig_n8 / fig_n9 / fig_n10 与 图9_1 变化，
-差异像素 0.126% / 0.073%（集中在标签本身），其余 8 图零变化；
-合并标签 5.0/5.5/3.5mm → 全部收敛到「字形离线 0.8mm」。
+**Acceptance (12-figure regression on this project)**: only fig_n8 / fig_n9 / fig_n10 and 图9_1 changed,
+with 0.126% / 0.073% differing pixels (concentrated on the labels themselves) and zero change in the other 8 figures;
+merged labels at 5.0/5.5/3.5mm all converged to "glyph 0.8mm from the line".
 
 
-## 24. ★★★ 连接线从框的**错误一侧**出线 —— 会横穿整个框，肉眼极难发现（2026-10-17 实坑）
+## 24. ★★★ A connector leaves a box from the **wrong side** — it crosses the whole box and is extremely hard to spot with the naked eye (real pitfall, 2026-10-17)
 
-**症状**（用户原话）：「『比对（GUI）→ 报表』的连接线**起始位置不对，跨越了整个比对（GUI）**，
-此问题应按**共性问题**排查」。
+**Symptoms** (the user's own words): "the connector from 『比对（GUI）』 ('Compare (GUI)') to 『报表』 ('Report') **starts in the wrong place, spanning the whole Compare (GUI)**.
+This should be investigated as a **common problem**."
 
-**根因**：`connect()` 的 `ia/ib` 只是「胶到哪个连接点」，**不校验方向是否合理**：
+**Root cause**: `connect()`'s `ia/ib` only say "glue to which connection point"; they **don't check whether the direction makes sense**:
 
 ```python
 cp["cmp"] = d.side_cps(box["cmp"], "bottom left")
 d.connect(box["cmp"], cp["cmp"]["left"], box["rep"], cp["rep"]["left"])   # ✗
-#                     ^^^^^^^^^^^^^^^ 目标在右边，却从左边出线
+#                     ^^^^^^^^^^^^^^^ target is on the right, yet the line leaves from the left
 ```
 
-两点同高时，连线**从左边中点一路向右**，横穿整个源框。源框有底色 → 线被压在框下面，
-只在右侧缺口露一截箭头，成品看着像「从框左边划过来」，**源脚本读起来完全正常**。
-另一形态：终点胶在**左边中点**、路径却绕进框内再横穿到边缘（本项目 图N11 记录框）。
+When the two points are at the same height, the connector runs **all the way right from the left midpoint**, crossing the entire source box. The source box has a fill colour → the line is pressed under the box,
+with only a short arrow tip showing in the gap on the right, so the finished product looks like "it came across from the left of the box", while **the source script reads perfectly normally**.
+Another form: the endpoint is glued to the **left midpoint**, but the path winds into the box and then crosses through to the edge (figure N11's record box in this project).
 
-**为什么必须当共性问题查**：同一份脚本里 `side_cps(...)` 给的侧别，很容易与实际布局
-（谁在左、谁在右）不一致；改一次布局就可能出现，且**不会报任何错**。
+**Why it must be treated as a common problem**: the side given by `side_cps(...)` in the same script can easily disagree with the actual layout
+(who is on the left, who is on the right); one layout change can introduce it, and it **raises no error at all**.
 
-**修法（两层，都已内置）**：
+**Fix (two layers, both built in)**:
 
-1. **写的时候就拦**：`connect()` 现在会做**端点出线方向自检** —— 该端连接点的
-   朝外法线 · 首段方向 < 0 时立即打印：
-
-   ```
-   [连线方向] Begin 端胶在形状#18 的 left 侧，首段却朝反方向 → 连线会横穿该形状。
-              改用朝向目标的那一侧（例：connect(a, cp["right"], b, cp["left"])）。
-   ```
-   只查**四向中点**（自定义连接点无「朝向」语义，跳过）；自由点 / 中心胶水跳过；
-   先向左绕再回头的合法走法**不会误报**（法线与首段同向）。
-
-2. **`d.check()` 现在连整页一起查**：除文字溢出外，还输出
+1. **Block it while writing**: `connect()` now does an **endpoint exit-direction self-check** — when the dot product of the connection point's
+   outward normal and the first segment's direction is < 0, it immediately prints:
 
    ```
-   [连线穿越] 线#7 穿入 形状#1（30×18 @10.0,10.0）内部
-   [连线自检] 出线方向 1 处 ｜ 穿越实体框 1 处
+   [Connector direction] The Begin end is glued to the left side of shape #18, but the first segment goes the opposite way → the connector will cross that shape.
+              Use the side facing the target instead (e.g. connect(a, cp["right"], b, cp["left"])).
    ```
-   `audit_links()` 用 Liang-Barsky 判「折线是否穿入某个**有底色**框内部」，
-   并排除两类「穿过去也正常」的框：
-   - **容器**：面积 ≥18% 页面积（泳道 / 系统边界框），或内含 ≥2 个**有底色**子框；
-   - **无底色文本框**（`FillPattern=0`）：通栏标题框，线从空白处经过不压字。
+   It only checks **four-way midpoints** (custom connection points have no "facing" semantics, so they're skipped); free points / centre glues are skipped;
+   a legitimate route that first goes left and then comes back **won't be falsely flagged** (normal and first segment point the same way).
 
-   ★ 容器判定里「子框只数有底色的」是关键：`step_box` 内部还有 1~2 个无底色文字框
-   （`merge_texts` 之前仍在页面上），若一并计数，**每个 step_box 都会被误判成容器**
-   而整张图漏查。
+2. **`d.check()` now checks the whole page as well**: besides text overflow, it also outputs
 
-**自查口径（解析 vsdx，不启 Visio）**：
+   ```
+   [Connector crossing] Line #7 enters the interior of shape #1 (30×18 @10.0,10.0)
+   [Connector self-check] Exit direction 1 place | crossing solid boxes 1 place
+   ```
+   `audit_links()` uses Liang-Barsky to decide "whether the polyline enters the interior of some **filled** box",
+   and excludes two kinds of boxes where "passing through is also normal":
+   - **Containers**: area ≥18% of the page area (lanes / system boundary boxes), or containing ≥2 **filled** child boxes;
+   - **Unfilled text boxes** (`FillPattern=0`): full-width title boxes; a line passing through the blank space doesn't press on any text.
 
-- `Cell` 的 `V` 是**内部英寸**（`U='MM'` 只是显示单位）→ 当毫米用差 25.4 倍；
-- 连接点段名在文件里是 **`Connection`（单数）**，`Connects` 却引用 `Connections.Xn`；
-- **`Connections.Y` 原点在左下、Y 向上** → 自上起算 `fy = 1 − Y/Height`（写反则上下全错）；
-- `pages.xml` 的属性是**单引号**，正则要 `['"]`。
+   ★ The key point in the container test is that "child boxes only count filled ones": a `step_box` still contains 1–2 unfilled text boxes inside it
+   (still on the page before `merge_texts`), and if those were counted too, **every step_box would be misjudged as a container**
+   and the whole figure would escape checking.
 
-**回归用例（改完自检逻辑必跑）**：
+**Self-check method (parse the vsdx, don't start Visio)**:
 
-| 用例 | 期望 |
+- A `Cell`'s `V` is in **internal inches** (`U='MM'` is only the display unit) → using it as millimetres is off by a factor of 25.4;
+- The connection-point section name in the file is **`Connection` (singular)**, while `Connects` references `Connections.Xn`;
+- **`Connections.Y` has its origin at the bottom-left, Y pointing up** → measured from the top, `fy = 1 − Y/Height` (reversed and top/bottom are all wrong);
+- `pages.xml` attributes use **single quotes**, so regexes need `['"]`.
+
+**Regression cases (must run after changing the self-check logic)**:
+
+| Case | Expected |
 |---|---|
-| 左→左（目标在右） | 报「出线方向」+「穿越实体框」 |
-| 右→左（正常） | 无 |
-| 上→下，中间隔一个框 | 只报「穿越实体框」（**不应**报出线方向） |
-| 上→下，`via` 绕开中间框 | 无 |
-| 先向左绕行再回头接右边 | 无（合法走法不误报） |
+| Left→left (target on the right) | Report "exit direction" + "crossing solid box" |
+| Right→left (normal) | None |
+| Top→bottom, with a box in between | Report only "crossing solid box" (**should not** report exit direction) |
+| Top→bottom, `via` routes around the middle box | None |
+| First goes left, then comes back to connect on the right | None (a legitimate route is not falsely flagged) |
 
-**本项目全量结果**：15 张图 2 处（图 8-1「比对→报表」、图N11「记录框」），其余 13 张 0 处；
-修完 `d.check()` 恒为「均无」。
+**Full results on this project**: 2 places across 15 figures (figure 8-1 "Compare→Report", figure N11 "record box"), 0 places in the other 13;
+after fixing, `d.check()` is always "none".
 
 ---
 
-## 25. ★★★ 图「变扁 / 比例不对」—— 先做三方对照，再决定改谁（2026-10-19 实坑，25 个对象）
+## 25. ★★★ A figure looks "squashed / wrong proportions" — do a three-way comparison first, then decide what to change (real pitfall, 2026-10-19, 25 objects)
 
-**症状**：文档里的图整体被压扁（或拉长），方框明显不是正方形，类图里的字横向拉宽。
-肉眼判断「比例不对」很容易，但**改错地方会把图彻底改坏**（§9、§13 都证明了：动 EMF `frame` 会整体放大裁剪）。
+**Symptoms**: the figure in the document is squashed overall (or stretched), rectangles are clearly not square, and the text in class diagrams is stretched horizontally.
+It's easy to judge "the proportions are wrong" by eye, but **changing the wrong thing will wreck the figure completely** (§9 and §13 both proved this: touching the EMF `frame` enlarges and crops the whole thing).
 
-**先认清三个「比例」**：
+**First, distinguish the three "ratios"**:
 
-| 名字 | 来源 | 说明 |
+| Name | Source | Notes |
 |---|---|---|
-| 显示框比 `dr` | docx 里 `<wp:extent cx cy>`（EMU）/ `<v:shape style="width:..pt;height:..pt">` | Word 排版按它出图 |
-| bounds 比 `br` | EMF 头偏移 8 的 `rclBounds`（4×int32，设备单位） | EMF 内容的真实包围盒 |
-| vsdx 比 `vr` | `visio/pages/page1.xml` 各 Shape 的 `PinX/PinY/Width/Height` 并集（**英寸**） | 设计真值 |
+| Display-box ratio `dr` | In the docx, `<wp:extent cx cy>` (EMU) / `<v:shape style="width:..pt;height:..pt">` | Word lays out the figure by this |
+| Bounds ratio `br` | EMF header offset 8, `rclBounds` (4×int32, device units) | The EMF content's true bounding box |
+| vsdx ratio `vr` | Union of each Shape's `PinX/PinY/Width/Height` in `visio/pages/page1.xml` (**inches**) | The design truth |
 
-> ★ vsdx 里 `Cell` 的 `V` 一律是**内部英寸**，`U='MM'` 只是显示单位（§24 也提过）。
+> ★ In a vsdx, a `Cell`'s `V` is always **internal inches**; `U='MM'` is only the display unit (§24 mentioned this too).
 
-**判据（决策树，别套常数）**：
+**Criteria (a decision tree — don't apply a constant)**:
 
 ```
-e_b = |br/vr - 1|      # bounds 与设计真值的偏差
-e_d = |dr/vr - 1|      # 显示框与设计真值的偏差
+e_b = |br/vr - 1| # deviation of bounds from the design truth
+e_d = |dr/vr - 1| # deviation of the display box from the design truth
 
-e_b ≤ 3%                → bounds 可信
-   └ e_d > 3%           → 【显示框写错了】只改显示框：H = W / br
-e_b > 3% 且 e_d ≤ 3%    → 【EMF 本身被改过】不要动 frame，重新导出 EMF
-e_b > 3% 且 e_d > 3%    → 【都偏】仍按「动 docx 不动 EMF」：H = W / br
+e_b ≤ 3% → bounds are trustworthy
+└ e_d > 3% → only change the display box: H = W / br
+e_b > 3% and e_d ≤ 3% → don't touch the frame; re-export the EMF
+e_b > 3% and e_d > 3% → still follow "change the docx, not the EMF": H = W / br
 ```
 
-**本项目实测**（2026-10-19，108 图 / 70 个 OLE 对象）：
+**Measured on this project** (2026-10-19, 108 figures / 70 OLE objects):
 
-- 25 个对象 `e_d` 恒 ≈ 48%、`e_b` ≈ 0~3% → **全部是显示框写错**，且 `dr = br × 0.52`（1/1.914）。
-- 稳定倍率的根因：**EMF `frame` 的 X/Y 两向 DPI 不一致**（实测 48.6 dpi vs 25.4 dpi）。`frame` 宽度被压
-  1.914 倍，谁拿 `frame` 去算显示框，就得到 0.52× 的假比例。
-- ★ **0.52 不是普适常数**，只说明「这批文件的显示框是照 frame 宽度算的」。永远用上面的三方对照，
-  不要记住某个倍率然后到处套。
-- 修完复验：108 图 `e_d` 全部 ≤1.5%（残余 1.7%~3.4% 的 12 张类图再按 `H = W/br` 精修一遍收敛）。
+- For 25 objects, `e_d` was consistently ≈ 48% and `e_b` ≈ 0–3% → **all of them were display boxes written wrong**, with `dr = br × 0.52` (1/1.914).
+- The root cause of the stable factor: **the EMF `frame`'s X/Y DPI are inconsistent** (measured 48.6 dpi vs 25.4 dpi). The `frame` width is compressed
+by a factor of 1.914, so whoever uses the `frame` to compute the display box gets a false ratio of 0.52×.
+- ★ **0.52 is not a universal constant**; it only says "this batch of files had their display boxes computed from the frame width". Always use the three-way comparison above;
+don't memorize some factor and apply it everywhere.
+- After fixing and re-verifying: all 108 figures had `e_d` ≤1.5% (the 12 class diagrams left at 1.7%–3.4% converged after one more refinement pass with `H = W/br`).
 
-**批量改显示框：三处都要写，缺一处就会被 Word 用旧值重排**：
+**Batch-changing display boxes: all three places must be written; missing one lets Word re-lay out with the old value**:
 
 ```python
 p = re.sub(r'<wp:extent cx="\d+" cy="\d+"',
-           f'<wp:extent cx="{int(W*12700)}" cy="{int(H*12700)}"', p)   # EMU = 1/12700 pt
+f'<wp:extent cx="{int(W*12700)}" cy="{int(H*12700)}"', p) # EMU = 1/12700 pt
 p = re.sub(r'<a:ext cx="\d+" cy="\d+"',
-           f'<a:ext cx="{int(W*12700)}" cy="{int(H*12700)}"', p)
+f'<a:ext cx="{int(W*12700)}" cy="{int(H*12700)}"', p)
 p = re.sub(r'style="width:[\d.]+pt;height:[\d.]+pt"',
-           f'style="width:{W:.1f}pt;height:{H:.1f}pt"', p)
+f'style="width:{W:.1f}pt;height:{H:.1f}pt"', p)
 ```
 
-- 老式 VML 图（`<w:object>` + `<v:shape>`）：**只有 style，没有 extent**；
-- DrawingML 图（`<pic:pic>`）：只有 `extent` / `a:ext`；
-- OLE 对象两种结构都会出现，按 rId 定位到段落就一起改。
+- Old-style VML figures (`<w:object>` + `<v:shape>`): **only style, no extent**;
+- DrawingML figures (`<pic:pic>`): only `extent` / `a:ext`;
+- OLE objects can appear in either structure; locate the paragraph by rId and change them together.
 
-**「太小」的另一半问题**：显示框比对了，但宽度只占栏宽 54%。定宽规则：
+**The other half of the "too small" problem**: the display-box ratio is right, but the width is only 54% of the column width. Width rule:
 
 ```python
-W = max(当前宽, min(设计宽mm * 2.83465, 栏宽))   # 2.83465 = pt/mm
+W = max(current width, min(design width in mm * 2.83465, column width)) # 2.83465 = pt/mm
 H = W / br
-if H > 600:            # 超页高的图按高回缩
-    H = 600; W = H * br
+if H > 600: # figures taller than the page shrink back by height
+H = 600; W = H * br
 ```
 
 ---
 
-## 26. ★★ Word 保存会把 `72.0pt` 规范化成 `1in` —— 解析 VML style 必须支持三种单位（2026-10-19 实坑）
+## 26. ★★ Word saving normalizes `72.0pt` to `1in` — parsing VML style must support three units (real pitfall, 2026-10-19)
 
-**症状**：脚本写入 `style="width:340pt;height:72.2pt"`，Word 打开保存一次后变成
-`style="width:340pt;height:1in"`。审计脚本用 `height:([\d.]+)pt` 去解析 → 拿到 0 →
-报表上出现「显示框 340x**0**」「长宽比 −100%」的假告警，看起来像文档被改坏了。
+**Symptoms**: the script writes `style="width:340pt;height:72.2pt"`, but after Word opens and saves it once, it becomes
+`style="width:340pt;height:1in"`. The audit script parses with `height:([\d.]+)pt` → gets 0 →
+the report shows false alarms like "display box 340x**0**" and "aspect ratio −100%", making it look as if the document was damaged.
 
-**根因**：Word 序列化 VML 时会挑「最简单位」—— 整 72pt 写 `1in`，整 1in 也可能是 `72pt`；
-`mm`/`cm` 同理。这不是损坏，是正常的单位归一化。
+**Root cause**: when Word serializes VML, it picks the "simplest unit" — a whole 72pt is written as `1in`, and a whole 1in may also be `72pt`;
+`mm`/`cm` likewise. This is not corruption; it's normal unit normalization.
 
-**修法**：解析一律做单位换算，不要写死 `pt`：
+**Fix**: always convert units when parsing; don't hard-code `pt`:
 
 ```python
 def to_pt(v):
-    m = re.match(r'([\d.]+)(pt|in|mm|cm)?', v)
-    if not m:
-        return 0.0
-    x, u = float(m.group(1)), (m.group(2) or 'pt')
-    return x * {'pt': 1.0, 'in': 72.0, 'mm': 2.83465, 'cm': 28.3465}[u]
+m = re.match(r'([\d.]+)(pt|in|mm|cm)?', v)
+if not m:
+return 0.0
+x, u = float(m.group(1)), (m.group(2) or 'pt')
+return x * {'pt': 1.0, 'in': 72.0, 'mm': 2.83465, 'cm': 28.3465}[u]
 
 wm = re.search(r'width:([\d.]+(?:pt|in|mm|cm)?)', style)
 hm = re.search(r'height:([\d.]+(?:pt|in|mm|cm)?)', style)
 dw, dh = to_pt(wm.group(1)), to_pt(hm.group(1))
 ```
 
-**连带教训**：
-- 同一个「写 72.2pt → 读回 1in」会让**阈值判定反复横跳**：写 72.2 读回 72.0，偏差 0.3%，
-  属于正常容差，不要为了"对齐到小数点"反复重写，写一次就够。
-- 定位图段落用 **rId → 段落**，不要用「第 N 个图片段落」的下标（一改内容就错位）。
-- 改完必须**重新导出 PDF 复核**（Word 的归一化只在保存后生效，静态查 XML 看不出来）。
+**Related lessons**:
+- The same "write 72.2pt → read back 1in" makes **threshold checks flip back and forth**: writing 72.2 and reading back 72.0 is a 0.3% deviation,
+which is within normal tolerance; don't rewrite repeatedly "to line up the decimals" — write it once and that's enough.
+- Locate a figure's paragraph by **rId → paragraph**, not by the index of "the Nth figure paragraph" (one content change misaligns it).
+- After changing, you must **re-export the PDF and re-check** (Word's normalization only takes effect after saving; a static XML check can't see it).
 
 ---
 
-## 27. ★★★ 静态 EMF 图（无 vsdx 源）文字被裁 —— 只能整张重绘，别指望自动检测（2026-10-19 实坑）
+## 27. ★★★ A static EMF figure (no vsdx source) has its text clipped — redraw the whole figure; don't expect automatic detection (real pitfall, 2026-10-19)
 
-**症状**：图里某个框的标题少一个字（「规划任务数据处理」显示成「划任务数据处理」），
-或者框内第三行文字压在框线上、被切掉半截。原图是别人早期导出的 EMF 图片，docx 里没有 vsdx 源。
+**Symptoms**: a box title in the figure is missing a character ("规划任务数据处理" ("planning task data processing") shows as "划任务数据处理"),
+or the third line of text inside a box presses on the box outline and is cut off halfway. The original figure is an EMF exported by someone else early on, and the docx has no vsdx source.
 
-**为什么不能"改一下"**：EMF 里的文字是**矢量轮廓/嵌入字形**，不是可编辑文本：
+**Why you can't just "fix it"**: the text in an EMF is **vector outlines / embedded glyphs**, not editable text:
 
-- PyMuPDF 在 PDF 里**提取不到**这些文字的 span（实测：含图那一页 `get_text()` 只返回正文和题注，
-  图内文字一个字都没有）→ 「在 PDF 里判断文字是否越出框」这条路直接不通。
-- PIL 字体度量法（`§3`）在这类图上**阈值极不稳定**：行高系数 1.30 + 全边距时命中 19 处，
-  改成 1.20 + 半边距时命中 0 处，同一批图结论翻转 → **不能作为判据**。
-- 只能**逐张裁图目检**。裁图方法：按题注 y 区间取 `page.get_drawings()` 的并集包围盒，
-  裁完拼成联系表（每张 4~6 个，DPI ≥240）一次性看。
+- PyMuPDF **can't extract** spans of this text from the PDF (measured: on the page containing the figure, `get_text()` returns only the body text and captions —
+not a single character of the text inside the figure) → the route of "judging in the PDF whether text exceeds its box" is a dead end.
+- The PIL font-metrics method (§3) has **extremely unstable thresholds** on this kind of figure: with a line-height factor of 1.30 + full margins it hit 19 places,
+and with 1.20 + half margins it hit 0 places — the same batch of figures flips its conclusion → **it can't be used as a criterion**.
+- The only option is to **crop each figure and inspect it visually**. Cropping method: take the union bounding box of `page.get_drawings()` over the caption's y range,
+crop it, and assemble a contact sheet (4–6 per sheet, DPI ≥240) to look at in one pass.
 
-**修法 = 重画 + 整张替换**：
+**Fix = redraw + replace the whole figure**:
 
-1. 照原图重画（`visio_lib` 正常流程），框宽按**最长文案**配足，别按"看起来差不多"的宽度画。
-   画完必须 `d.check()` 到 `[文字溢出] 无`（它会按 PIL 度量报"框高/框宽装不下"）。
-   ★ 但 `d.check()` 通过 ≠ 一定不溢出：它只算文本框尺寸，管不到"字号大于框"这种源图设计问题，
-   所以重画时**框高要给足**（本项目 `box()` 的 body 区 = `h - 8.6`，2 行正文建议 `h ≥ 17~19mm`）。
-2. 用 EMF 的 **bounds 比**重设显示框（§25），不要用画布比：
+1. Redraw from the original figure (normal `visio_lib` flow), making the box wide enough for the **longest text** — don't draw it at a width that merely "looks about right".
+After drawing, `d.check()` must reach `[text overflow] none` (it reports "box height/width can't fit" by PIL measurement).
+★ But passing `d.check()` ≠ definitely no overflow: it only computes text-box dimensions and can't catch a source-figure design problem like "font size larger than the box",
+so when redrawing, **give the box enough height** (in this project, `box()`'s body area = `h - 8.6`; for 2 lines of body text, `h ≥ 17–19mm` is recommended).
+2. Reset the display box using the EMF's **bounds ratio** (§25), not the canvas ratio:
 
 ```python
 b = open(new_emf, 'rb').read()
 bd = struct.unpack('<4i', b[8:24])
 ratio = (bd[2] - bd[0]) / (bd[3] - bd[1])
-H = W / ratio            # W 沿用原图宽度（或按上条定宽规则）
-# 画布 146x68mm 却按画布比算 H，会得到 -6.9% 的偏差 ← 本项目实坑
+H = W / ratio # W keeps the original figure's width (or follows the width rule above)
+# A 146x68mm canvas computed by canvas ratio gives a -6.9% deviation ← a real pitfall on this project
 ```
 
-3. 写回 docx：`zipfile` 只替换 `word/media/<该图>.emf` + `word/document.xml`，其余条目**按字节原样复制**
-   （OLE 与其它 EMF 零风险）。
+3. Write back into the docx: with `zipfile`, replace only `word/media/<that figure>.emf` + `word/document.xml`, and copy all other entries **byte-for-byte as they were**
+(zero risk to OLE and other EMFs).
 
-**验收**：重新导 PDF，裁该图放大目检（300~400 dpi），确认①文字全在框内 ②长宽比 ≤1.5% ③居中 ≤1pt。
+**Acceptance**: re-export the PDF, crop the figure and inspect it enlarged (300–400 dpi), confirming ① all text is inside its box ② aspect ratio ≤1.5% ③ centring ≤1pt.
 
-**本项目结果**：22 个「frame≠bounds」对象被怀疑文字溢出，逐张目检后**只有 1 张真有问题**，
-其余 21 张正常（类图右侧本就留白，没有溢出风险）。
-→ ★ **从 `frame≠bounds` 推出来的缺陷清单是假设，不是结论；必须先目检再报数。**
+**Results on this project**: 22 "frame≠bounds" objects were suspected of text overflow; after inspecting each one visually, **only 1 really had a problem**,
+and the other 21 were fine (class diagrams have blank space on the right by design, with no overflow risk).
+→ ★ **A defect list derived from `frame≠bounds` is a hypothesis, not a conclusion; you must inspect visually before reporting numbers.**
 
 ---
 
-## 28. ★★ 两个「测量方法本身有坑」的验收项：居中、目录页码（2026-10-19 实坑）
+## 28. ★★ Two acceptance items where the **measurement method itself is flawed**: centring, and table-of-contents page numbers (real pitfall, 2026-10-19)
 
-### 28.1 测图是否居中：别用 `Range.Information`
+### 28.1 Checking whether a figure is centred: don't use `Range.Information`
 
 ```python
-sh.InlineShapes(i).Range.Information(5)   # wdHorizontalPositionRelativeToPage
-# ✗ 108 个图形全部返回 89.8pt（= 段落左边距），完全不分位置
+sh.InlineShapes(i).Range.Information(5) # wdHorizontalPositionRelativeToPage
+# ✗ All 108 figures return 89.8pt (= the paragraph's left margin), with no distinction at all
 ```
 
-**正解 = PDF 矢量路径法**：EMF 在 PDF 里回放成矢量 path，取 `page.get_drawings()` 里
-**正常尺寸** path 的并集包围盒，与栏中心比：
+**The correct approach = the PDF vector-path method**: an EMF is played back into the PDF as vector paths; take the union bounding box of the
+**normal-sized** paths in `page.get_drawings()` and compare it with the column centre:
 
 ```python
 rects = []
 for dr in page.get_drawings():
-    r = dr['rect']
-    if r.width <= 0.5 and r.height <= 0.5:      # 排除点/短线
-        continue
-    if r.width > COLW * 1.06 or r.x0 < col0 - 30 or r.x1 > col1 + 30:
-        continue                                 # ★ 排除 EMF 的超大裁剪框
-    rects.append(r)
+r = dr['rect']
+if r.width <= 0.5 and r.height <= 0.5: # exclude points/short lines
+continue
+if r.width > COLW * 1.06 or r.x0 < col0 - 30 or r.x1 > col1 + 30:
+continue # ★ exclude the EMF's oversized clipping box
+rects.append(r)
 
-# 按题注切 y 区间，只取「上一题注之后、本题注之前」的 path
+# Slice by caption y-range, taking only paths "after the previous caption, before this caption"
 cand = [r for r in rects if r.y0 >= low - 2 and r.y1 <= cap.y0 + 3]
 x0, x1 = min(r.x0 for r in cand), max(r.x1 for r in cand)
-offset = (x0 + x1) / 2 - (col0 + col1) / 2       # ≤1pt 视为居中
+offset = (x0 + x1) / 2 - (col0 + col1) / 2 # ≤1pt counts as centred
 ```
 
-**注意**：
-- **目录/图表目录页要排除**（页文本同时含 `....` 和 `图 `）；
-- 位图图（`<pic:pic>`，非 EMF）用 `page.get_image_info()` 的 bbox 补测；
-- 「墨迹包围盒按题注切带」的做法会**假阳性**：EMF 内部框里的文字也被提取成文本行，
-  带状区被压成窄条（本项目曾把 2 张居中良好的图误报偏左 67~70pt）。
+**Notes**:
+- **Exclude the table-of-contents / list-of-figures pages** (page text containing both `....` and `图 ` ("Figure "));
+- For bitmap figures (`<pic:pic>`, not EMF), supplement the measurement with the bbox from `page.get_image_info()`;
+- The "ink bounding box sliced by caption band" approach gives **false positives**: text inside boxes in the EMF is also extracted as text lines,
+squeezing the band into a narrow strip (on this project it once falsely reported 2 well-centred figures as 67–70pt off to the left).
 
-### 28.2 校验图表目录页码：页码取「页脚块」，不要取文本行序
+### 28.2 Verifying list-of-figures page numbers: take the page number from the "footer block", not from text-line order
 
 ```python
-# ✗ 错：以为页码在 get_text() 的最后几行
-for line in reversed(page.get_text().strip().split('\n')[-6:]): ...
-# 页脚块在 PyMuPDF 的块序列里可能排在第 2 位 → 取到正文里的数字，整表误报
+# ✗ Wrong: assuming the page number is in the last few lines of get_text()
+for line in reversed(page.get_text().strip().split('\n')[-6:]):...
+# The footer block may sit 2nd in PyMuPDF's block sequence → you pick up a number from the body text, and the whole table is falsely flagged
 ```
 
 ```python
-# ✓ 对：按坐标取页脚区域（A4 高 841.9pt）
+# ✓ Right: take the footer region by coordinates (A4 height 841.9pt)
 for b in page.get_text('blocks'):
-    if b[1] > page.rect.height - 70:          # 底部 70pt 带
-        s = b[4].strip()
-        if s.isdigit():
-            label = int(s); break
+if b[1] > page.rect.height - 70: # bottom 70pt band
+s = b[4].strip()
+if s.isdigit():
+label = int(s); break
 ```
 
-**为什么必须校验**：改图尺寸会让页数变化（本项目 204 → 201 页），
-`doc.Fields.Update()` + `TablesOfContents/Figures.Update()` 之后必须**重新导 PDF 逐条比对**
-「目录页码 vs 正文实际页码」。本项目 191 条图表目录条目最终 100% 一致。
+**Why verification is necessary**: changing figure sizes changes the page count (on this project, 204 → 201 pages),
+so after `doc.Fields.Update()` + `TablesOfContents/Figures.Update()` you must **re-export the PDF and compare entry by entry**
+"table-of-contents page number vs actual page number in the body". On this project, all 191 list-of-figures entries ended up 100% consistent.
 
-**导出 PDF 的正确姿势**：`doc.SaveAs2(pdf_path, 17)`（wdFormatPDF）走**临时副本**，
-`ExportAsFixedFormat` 在某些环境会**静默失败**（不报错、不产文件）。路径必须 `os.path.abspath()`，
-否则 Word 会把相对路径解析到 `C:\Windows\System32\` 下并报 "couldn't find your file"。
+**The correct way to export a PDF**: `doc.SaveAs2(pdf_path, 17)` (wdFormatPDF) via a **temporary copy**;
+`ExportAsFixedFormat` **silently fails** in some environments (no error, no file produced). The path must be `os.path.abspath()`,
+otherwise Word resolves the relative path under `C:\Windows\System32\` and reports "couldn't find your file".
 
-## 29. ★★★ 贴底文字被裁 / 图缩在左上角 —— EMF 头三套尺寸必须互相对齐（2026-10-25 实坑，COMAC 17 图）
+## 29. ★★★ Text at the bottom is clipped / the figure shrinks into the top-left corner — the three sets of dimensions in the EMF header must agree with each other (real pitfall, 2026-10-25, 17 COMAC figures)
 
-### 29.1 症状与误判
+### 29.1 Symptoms and misdiagnosis
 
-图里最后一行字（图注、底注、脚注）在 Word / docx 预览里**只剩上半截**，而同源 PNG
-完全正常。很容易误判成「图源排版被裁」去改 Visio 源图 —— **其实图源没问题**。
+The last line of text in a figure (caption, bottom note, footnote) shows **only its top half** in the Word / docx preview, while the same-source PNG
+is completely normal. It's easy to misdiagnose this as "the figure source's layout was clipped" and go and change the Visio source figure — **but the figure source is fine**.
 
-### 29.2 真因：`Page.Export` 的 rclBounds 比实际位图矮约 9 px
+### 29.2 True cause: `Page.Export`'s rclBounds is about 9 px shorter than the actual bitmap
 
-| 量 | 实测值（图 11-7） |
+| Quantity | Measured value (figure 11-7) |
 |---|---|
-| 同源 PNG | 601 × 342 px |
-| EMF `rclBounds` | 600 × **333** px ← 矮 9 px（≈2.4 mm） |
+| Same-source PNG | 601 × 342 px |
+| EMF `rclBounds` | 600 × **333** px ← 9 px short (≈2.4 mm) |
 
-Visio 计算裁剪框时对文字下缘（字身框 vs 墨迹）估计偏小；**位图把字画全了，
-EMF 的 bounds 却少 9 px**。Word/OLE 按 rclBounds 映射 → 贴底那行字的下半截被切。
+Visio underestimates the lower edge of the text (glyph bounding box vs ink) when computing the clipping box; **the bitmap draws the characters in full,
+but the EMF's bounds are 9 px short**. Word/OLE maps by rclBounds → the lower half of that bottom line of text is cut off.
 
 ```python
-# 判据：bounds 高 + 9 ≈ PNG 高（宽度基本一致，差 1 px 属舍入）
+# Criterion: bounds height + 9 ≈ PNG height (widths are basically the same; a 1 px difference is rounding)
 rb = struct.unpack_from("<iiii", buf, 8)
-print(rb[3] - rb[1], Image.open(png).size[1])     # 333 342
+print(rb[3] - rb[1], Image.open(png).size[1]) # 333 342
 ```
 
-**修复**：导出后用同源 PNG 的像素尺寸把 rclBounds 补足（`_fix_emf_size(path, W, H, png=...)`，
-`export_all()` 已把 PNG 排到 EMF **之前**）。源图侧再加一道保险：贴底文字用
-`valign=0`（顶端对齐），别让它正好压在裁剪框边上。
+**Fix**: after exporting, use the same-source PNG's pixel dimensions to top up rclBounds (`_fix_emf_size(path, W, H, png=...)`,
+and `export_all()` already orders PNG **before** EMF). Add one more safeguard on the figure-source side: use
+`valign=0` (top alignment) for text at the bottom, so it doesn't sit exactly on the clipping-box edge.
 
-### 29.3 另一半：rclFrame 与 szlMillimeters 必须同标定
+### 29.3 The other half: rclFrame and szlMillimeters must use the same calibration
 
-渲染器对 EMF 的物理尺寸有两套判据，**不一致时 Word 取 `szlDevice ÷ szlMillimeters`**：
+A renderer has two criteria for an EMF's physical size, and **when they disagree, Word takes `szlDevice ÷ szlMillimeters`**:
 
-| 来源 | rclBounds ÷ rclFrame | szlDevice ÷ szlMillimeters | 结果 |
+| Source | rclBounds ÷ rclFrame | szlDevice ÷ szlMillimeters | Result |
 |---|---|---|---|
-| Visio 原始导出 | 3.78 px/mm | 14.8 px/mm（2560/173） | **图缩到对象框的 1/4，贴左上角** |
-| 正确（本库现输出） | 3.78 | 3.78 | 铺满对象框 |
+| Visio's original export | 3.78 px/mm | 14.8 px/mm (2560/173) | **Figure shrinks to 1/4 of the object box, stuck in the top-left corner** |
+| Correct (what this library now outputs) | 3.78 | 3.78 | Fills the object box |
 
-所以 `_fix_emf_size()` 除了写 rclFrame / szlMillimeters，**还要把 szlDevice 写成内容
-像素尺寸**（`struct.pack_into("<ii", buf, 72, bw, bh)`），三者才自洽。
+So `_fix_emf_size()`, besides writing rclFrame / szlMillimeters, **must also write szlDevice as the content pixel dimensions** (`struct.pack_into("<ii", buf, 72, bw, bh)`), so all three agree.
 
-### 29.4 复查清单
+### 29.4 Re-check list
 
-1. `bounds == PNG 尺寸`（±1 px）；
-2. `bounds_w / frame_w_mm` 与 `dev_w / mm_w` 相等（±0.05）；
-3. docx 里**图题上方 3 mm** 裁一条 500 dpi 的带看一眼 —— 半截字在 100 dpi 下看不出来；
-4. 与「已知正确」的上一版 PDF 逐图比矢量范围，比值应落在 0.96~1.04。
+1. `bounds == PNG dimensions` (±1 px);
+2. `bounds_w / frame_w_mm` equals `dev_w / mm_w` (±0.05);
+3. In the docx, crop a 500 dpi strip **3 mm above the figure caption** and look at it — half-cut characters can't be seen at 100 dpi;
+4. Compare vector extents figure by figure against the previous PDF known to be correct; the ratio should fall in 0.96–1.04.
 
-### 29.5 替换预览图时别按 `imageN` 序号
+### 29.5 When replacing a preview image, don't go by the `imageN` number
 
-Word / WPS 重存过的 docx 里，`word/media/imageN.emf` 的编号**与正文出现顺序无关**
-（后插入的图 11-7 是 `image17.emf`，却排在第 10 位）。按序号替换会张冠李戴 ——
-必须按 `document.xml` 里 `w:object` 的顺序取 `rId` → 媒体文件，再用**图题**匹配素材。
+In a docx re-saved by Word / WPS, the numbering of `word/media/imageN.emf` is **unrelated to the order of appearance in the body**
+(the later-inserted figure 11-7 is `image17.emf`, yet appears 10th). Replacing by number swaps the wrong figures —
+you must take the `rId` → media file in the order of `w:object` in `document.xml`, then match by **figure caption**.
 
 ---
 
-## 30. 曲线连接线与箭头大小（2026-11-19 实证）
+## 30. Curved connectors and arrow size (verified 2026-11-19)
 
-### 30.1 `Page.DrawSpline` 在 COM 下**调不通**
+### 30.1 `Page.DrawSpline` **cannot be made to work** under COM
 
-早/晚绑定都试过：
+Both early and late binding were tried:
 
 ```python
 page.DrawSpline((0.5, 0.5, 1.0, 1.2, 1.5, 1.4, 2.0, 1.0), 0)
@@ -1244,70 +1243,69 @@ page.DrawSpline(VARIANT(VT_ARRAY|VT_R8, vals), 0)
 # TypeError: Objects for SAFEARRAYS must be sequences (of sequences), or a buffer object.
 ```
 
-参数怎么给都不对（`xyArray` 需要 Visio 私有 SAFEARRAY 布局）。**不要在这上面耗**：
-曲线一律用 `connect(..., via=[控制点], smooth=N)` —— 本库用 Catmull-Rom 过控制点
-采样成密集折线（`catmull_rom()`），每段 N 点，几何行仍是普通 `LineTo`。
+No way of passing the parameters works (`xyArray` needs Visio's private SAFEARRAY layout). **Don't burn time on this**:
+curves always use `connect(..., via=[control points], smooth=N)` — this library samples a Catmull-Rom spline through the control points
+into a dense polyline (`catmull_rom()`), N points per segment, with the geometry rows still ordinary `LineTo`.
 
-代价与注意：
+Costs and cautions:
 
-- 曲线没有可拖的控制点（Visio 里只能整体拖），改形状就改脚本的 `via`；
-- 控制点**别重复**（粘连接点时端点会与首/尾点重合）→ `catmull_rom()` 内部先去重，
-  否则零长段把切线拉歪，末端会出现回勾、箭头方向也跟着反；
-- 首段方向必须朝连接点的朝外法线，否则 `_check_end_dirs()` 照样报警（曲线不豁免）。
+- A curve has no draggable control points (in Visio you can only drag it as a whole); to change its shape, change the script's `via`;
+- **Don't repeat control points** (when gluing to a connection point, an endpoint coincides with the first/last point) → `catmull_rom()` de-duplicates internally,
+  otherwise a zero-length segment distorts the tangent, and the end hooks back on itself and the arrow direction reverses with it;
+- The first segment's direction must face the connection point's outward normal, otherwise `_check_end_dirs()` still raises the alarm (curves are not exempt).
 
-### 30.2 画出来的 1-D 形状**没有 `ArrowSize` 单元格**
+### 30.2 A drawn 1-D shape has **no `ArrowSize` cell**
 
-`DrawLine` / `DrawPolyline` 生成的形状，Line 段里只有 `BeginArrow` / `EndArrow`，
-**没有 `ArrowSize`**（`CellsU("ArrowSize")` 报 `Unexpected end of file`；
-`CellsSRC(1,0,6)` 取到的是几何段）。后果：
+Shapes generated by `DrawLine` / `DrawPolyline` have only `BeginArrow` / `EndArrow` in the Line section,
+with **no `ArrowSize`** (`CellsU("ArrowSize")` reports `Unexpected end of file`;
+`CellsSRC(1,0,6)` lands on the geometry section). Consequences:
 
-- 箭头永远是 Visio 的「中号」，**不随 `LineWeight` 缩放**（实测 0.5pt 与 0.75pt 的箭头一样大）；
-- 想缩小箭头只有三条路：① 给箭头留够长度（首选，别把 3 mm 缝隙塞满一个箭头）；
-  ② 让箭头落在圆/框的**切线方向**上（水平接近比斜着接近干净）；③ 手画一个小三角
-  （`poly` 三点）当箭头，`EndArrow=0`。
+- The arrow is always Visio's "medium" size, and **does not scale with `LineWeight`** (measured: the arrow is the same size at 0.5pt and 0.75pt);
+- There are only three ways to make an arrow smaller: ① leave enough length for the arrow (preferred — don't cram an arrow into a 3 mm gap);
+  ② make the arrow land in the **tangent direction** of the circle/box (approaching horizontally is cleaner than approaching at an angle); ③ hand-draw a small triangle
+  (three `poly` points) as the arrow, with `EndArrow=0`.
 
-★ 判断「箭头是不是太大」要在 **96 dpi 下看**（Word 里 100% 缩放的实际观感）。
-300 dpi 放大 3 倍看小箭头，任何 0.75pt 线的箭头都会显得糊成一团，容易白改半天。
+★ Judge "whether the arrow is too big" at **96 dpi** (how it actually looks in Word at 100% zoom).
+Looking at a small arrow at 300 dpi, magnified 3×, makes any 0.75pt line's arrow look like a blurry blob, and you can easily waste half a day changing things for nothing.
 
 ---
 
-## 31. 原地替换文档里**已有**的 OLE 图（返修场景，2026-11-19 实证）
+## 31. Replacing an **existing** OLE figure in place in a document (rework scenario, verified 2026-11-19)
 
-甲方 / 上一版交付的 docx，图常常是 `<w:object>` 包着的 Visio OLE 对象。要换图时：
+In a docx delivered by the client (甲方, the client side) / a previous version, figures are often Visio OLE objects wrapped in `<w:object>`. When replacing a figure:
 
-### 31.1 必须换**两处**，少一处就「显示的图和双击进去的图不一致」
+### 31.1 You must replace **two places**; missing one gives "the displayed figure and the figure you get on double-click don't match"
 
-| 槽位 | 作用 |
+| Slot | Purpose |
 |---|---|
-| `word/embeddings/*.vsdx`（或 `Microsoft_Visio_Drawing.vsdx`） | 双击激活时打开的源对象 |
-| `word/media/*.emf` | **Word 平时画的就是这个缓存预览**，不开 Visio |
+| `word/embeddings/*.vsdx` (or `Microsoft_Visio_Drawing.vsdx`) | The source object opened when you double-click to activate it |
+| `word/media/*.emf` | **This cached preview is what Word normally draws**, without opening Visio |
 
-只换 vsdx → 页面上还是旧图；只换 EMF → 双击进去还是旧图。
+Replace only the vsdx → the page still shows the old figure; replace only the EMF → double-clicking still opens the old figure.
 
-### 31.2 显示框宽高要按新 EMF 重写
+### 31.2 The display box width/height must be rewritten from the new EMF
 
-`<w:object>` 里 `<v:shape style="width:439.5pt;height:227.5pt">` 是显示框。图重画后
-宽高比变了却不改它，Word 会**拉伸**（常见症状：图被压扁、字变瘦）。改法：
+In `<w:object>`, `<v:shape style="width:439.5pt;height:227.5pt">` is the display box. If the figure is redrawn so its aspect ratio changes
+but this isn't updated, Word will **stretch** it (common symptom: the figure is squashed, the characters look thin). How to change it:
 
 ```python
 STYLE_RE = re.compile(r'(style="width:)([\d.]+)(pt;height:)([\d.]+)(pt)')
-# 只对 <w:object>…</w:object> 内做一次替换，别动其它图片
+# Only do one replacement inside <w:object>…</w:object>; don't touch other images
 ```
 
-高度 = 宽度 ÷ EMF 宽高比，比例从 EMF 头 `rclFrame`（0.01 mm）取 —— **别用** VML
-`style` 里旧的值，也别用 `w:dxaOrig`（那是原对象尺寸，与显示框无关）。
+Height = width ÷ EMF aspect ratio, with the ratio taken from the EMF header's `rclFrame` (0.01 mm) — **don't use** the old value in the VML
+`style`, and don't use `w:dxaOrig` (that's the original object size, unrelated to the display box).
 
-### 31.3 显示框宽度别超过正文栏宽
+### 31.3 The display box width must not exceed the body column width
 
-本机实测：`w:pgMar` 左右各 1797 twips → 栏宽 8313 twips = **415.7pt**。老图常是
-439.5pt（溢出页边 8mm），换图时一并收到栏宽内，顺便把「图比表格宽」的版式问题修掉。
+Measured on this machine: `w:pgMar` is 1797 twips on each side → column width 8313 twips = **415.7pt**. Old figures are often
+439.5pt (8mm past the page margin); when replacing a figure, bring it inside the column width as well, fixing the "figure wider than the table" layout problem at the same time.
 
-### 31.4 现成脚本
+### 31.4 Ready-made script
 
 ```bash
-python scripts/replace_ole.py 方案.docx 图N2.emf 图N2.vsdx      # 缺省显示框 = 栏宽 − 0.5pt
-python scripts/replace_ole.py 方案.docx … --width-pt 400        # 需要更窄时显式给
+python scripts/replace_ole.py 方案.docx 图N2.emf 图N2.vsdx      # default display box = column width − 0.5pt
+python scripts/replace_ole.py 方案.docx … --width-pt 400        # give it explicitly when a narrower one is needed
 ```
 
-脚本只处理「一图一对象」；多图时按 §29.5，**按 `document.xml` 里 `w:object` 的 rId
-对到媒体文件再用图题匹配**，不要按 `imageN` 序号猜。
+The script only handles "one figure, one object"; for multiple figures, per §29.5, **match the `rId` in `document.xml`'s `w:object` to the media file, then match by figure caption** — don't guess by the `imageN` number.

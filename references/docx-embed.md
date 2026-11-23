@@ -1,90 +1,84 @@
-# 把 Visio 图嵌进 Word
+[中文文档 (Chinese)](docx-embed.zh-CN.md)
 
-三条路线：**A**（插图，静态矢量）→ **C**（OLE 对象，双击可编辑）→ **B**（手工拼 OOXML，兜底）。
-选哪条取决于「甲方要不要在 Word 里双击改图」：
+# Embedding Visio Figures in Word
 
-| 需求 | 路线 | 产物 |
+Three routes: **A** (insert picture, static vector) → **C** (OLE object, double-click to edit) → **B** (hand-built OOXML, fallback).
+Which one to pick depends on "does the client want to double-click the figure in Word to edit it":
+
+| Need | Route | Result |
 |---|---|---|
-| 只要图能看、缩放不糊 | A / B | `<w:drawing>` + EMF |
-| 甲方要**双击进 Visio 编辑** | **C** | `<w:object>` + `<o:OLEObject ProgID="Visio.Drawing.15">` |
-| 无 Word 环境，纯脚本合成 | B | 同 A |
+| Just needs the figure visible and sharp when scaled | A / B | `<w:drawing>` + EMF |
+| Client wants to **double-click into Visio to edit** | **C** | `<w:object>` + `<o:OLEObject ProgID="Visio.Drawing.15">` |
+| No Word environment, pure script composition | B | Same as A |
 
-**路线 C 建议叠在 A 之上做**：先用 A/B 把 EMF 图插进去（排版、宽度都调好），
-最后再用 C 把每张图**原地**换成 OLE 对象——这样排版逻辑完全复用，不必重算尺寸。
+**Route C is best layered on top of A**: first insert the EMF figures with A/B (layout and widths all set), then use C to swap each figure **in place** for an OLE object — that way the layout logic is fully reused and no sizes need recalculating.
 
 ---
 
-## 路线 C：转成可双击编辑的 Visio 对象（OLE）
+## Route C: Convert to Double-Click-Editable Visio Objects (OLE)
 
-甲方常见要求：「图要能在 Word 里双击打开 Visio 改」。这时不能插 EMF，要嵌 **OLE 对象**。
+A common client requirement: "the figure must open in Visio for editing when double-clicked in Word." In that case you cannot insert an EMF; you must embed an **OLE object**.
 
-**做法**：Word COM 的 `InlineShapes.AddOLEObject()`，**原地替换**已有图片，保留原显示宽度。
+**Approach**: Word COM's `InlineShapes.AddOLEObject()`, replacing existing pictures **in place** while keeping their original display width.
 
 ```python
 import win32com.client
 word = win32com.client.DispatchEx("Word.Application")
 word.Visible = False; word.DisplayAlerts = 0
 doc = word.Documents.Open(DOC, ReadOnly=False)
-shapes = list(doc.InlineShapes)                 # 必须先快照，替换过程中集合会变
+shapes = list(doc.InlineShapes)                 # Must snapshot first; the collection changes during replacement
 assert len(shapes) == len(FIGS), "图片数与预期不符"
 for sh, fig in zip(shapes, FIGS):
-    rng, w, h = sh.Range, sh.Width, sh.Height   # 先记住 Range + 宽 + 高
-    sh.Delete()                                 # 再删，否则 Range 失效
+    rng, w, h = sh.Range, sh.Width, sh.Height   # Remember Range + width + height first
+    sh.Delete()                                 # Then delete, otherwise Range becomes invalid
     new = rng.InlineShapes.AddOLEObject(FileName=abs_vsdx)
-    new.LockAspectRatio = 0                     # msoFalse：必须先关
-    new.Width = w                               # 宽度还原
-    new.Height = h                              # ★ 高度也必须还原（见坑 3）
+    new.LockAspectRatio = 0                     # msoFalse: must turn it off first
+    new.Width = w                               # Restore width
+    new.Height = h                              # ★ Height must also be restored (see pitfall 3)
 for toc in doc.TablesOfContents:
-    toc.Update()                                # 图数变了，页码要重排
+    toc.Update()                                # Figure count changed, page numbers must be re-laid-out
 doc.Save(); doc.Close(False); word.Quit()
 ```
 
-**要点 / 坑**：
+**Key points / pitfalls**:
 
-1. **顺序敏感**：`InlineShapes` 按文档出现顺序排列，`FIGS` 必须与之一一对应。
-   先 `list()` 快照再改，边遍历边删会漏项。
-2. **先取 `Range` 再 `Delete`**：删掉形状后 `sh.Range` 就失效了，插入点要用删之前的 `rng`。
-3. **★ 宽度和高度都要手动还原**：`AddOLEObject` 既不继承原宽度、也不继承原高度 ——
-   它按 **OLE 对象（Visio）自身固有纵横比**定尺寸。只写 `Width` 时 Word 会据此重算高度，
-   结果与 EMF 图幅不符，**图被压扁（实测最高 +20%）**，而页数/表格/禁词等常规校验全绿、查不出来。
-   所以必须 `LockAspectRatio = 0` 后把 `Width` 与 `Height` **都**写回（原高度取自替换前的图，即 EMF 比例）。
-   详见 `pitfalls.md` §13。
-4. **嵌的是 `.vsdx`**，不是 `.emf`——所以源文件要留 `.vsdx`（路线 A/B 只需 `.emf`）。
-5. **TOC 必须 `Update()`**：图片换成 OLE 后页面重新分页，目录页码会全错。
-6. **完成后要去掉 `settings.xml` 的 `<w:updateFields/>`**，否则甲方一打开就弹「是否更新域」。
-7. **Word 会把 EMF 预览重写一遍**（`word/media/*.emf` 字节数会变），这是正常的；
-   校验时不要拿嵌入 EMF 的 sha1 去和源 EMF 比，要比 **`.vsdx` 的对象结构**。
+1. **Order-sensitive**: `InlineShapes` is ordered by appearance in the document, and `FIGS` must correspond to it one-to-one. Snapshot with `list()` first, then modify; deleting while iterating skips items.
+2. **Get `Range` before `Delete`**: after deleting the shape, `sh.Range` is invalid, so the insertion point must use the `rng` captured before deletion.
+3. **★ Both width and height must be restored manually**: `AddOLEObject` inherits neither the original width nor the original height — it sizes by the **OLE object (Visio)'s own intrinsic aspect ratio**. If you only set `Width`, Word recalculates the height from it, the result disagrees with the EMF figure extent, and the **figure is squashed (measured up to +20%)**, while routine checks on page count, tables, and banned words all pass green and catch nothing. So after `LockAspectRatio = 0` you must write back **both** `Width` and `Height` (the original height taken from the figure before replacement, i.e. the EMF ratio). See `pitfalls.md` §13.
+4. **What gets embedded is a `.vsdx`**, not an `.emf` — so keep the `.vsdx` source files (routes A/B only need the `.emf`).
+5. **The TOC must be `Update()`d**: after pictures become OLE objects the pages reflow, and the table-of-contents page numbers will all be wrong.
+6. **After finishing, remove `<w:updateFields/>` from `settings.xml`**, otherwise the client gets a "do you want to update fields" prompt on opening.
+7. **Word rewrites the EMF preview** (`word/media/*.emf` byte counts change); this is normal. When verifying, do not compare the embedded EMF's sha1 against the source EMF — compare the **`.vsdx` object structure** instead.
 
-**校验**（换完后必查）：
+**Verification** (mandatory after the swap):
 
 ```python
 d = zipfile.ZipFile(docx).read('word/document.xml').decode('utf-8')
-d.count('<w:object')          # == 图数
-d.count('Visio.Drawing.15')   # == 图数
-d.count('<w:drawing')         # == 0（不应再有裸图）
-len([n for n in z.namelist() if 'embeddings/' in n])   # == 图数
-len([n for n in z.namelist() if 'media/' in n])        # == 图数（EMF 预览）
+d.count('<w:object')          # == figure count
+d.count('Visio.Drawing.15')   # == figure count
+d.count('<w:drawing')         # == 0 (no bare pictures should remain)
+len([n for n in z.namelist() if 'embeddings/' in n])   # == figure count
+len([n for n in z.namelist() if 'media/' in n])        # == figure count (EMF previews)
 
-# ★ 图幅校验：v:shape 的 style 宽高比须与 EMF 宽高比一致（偏差 ≤0.1%）
+# ★ Figure-extent check: the width/height ratio in v:shape's style must match the EMF aspect ratio (deviation ≤0.1%)
 import re
 from docx_embed import emf_info
 styles = re.findall(r'style="width:([0-9.]+)pt;height:([0-9.]+)pt"', d)
-for (wp, hp), emf in zip(styles, EMFS):        # EMFS 顺序同 FIGS
+for (wp, hp), emf in zip(styles, EMFS):        # EMFS in the same order as FIGS
     assert abs(float(wp) / float(hp) / emf_info(emf)["ratio"] - 1) < 0.001
 ```
 
-再开一次 Word 读 `doc.InlineShapes.Count` 与 `Type==1`（wdInlineShapeEmbeddedOLEObject）的个数，确认全部是 OLE。
+Then open Word once more and read `doc.InlineShapes.Count` and the count of `Type==1` (wdInlineShapeEmbeddedOLEObject) to confirm all of them are OLE.
 
-**注意**：Word 保存后会**规范化 XML**（如 `<w:b />` → `<w:b/>`、属性顺序变化）。
-用字符串计数做校验时，两种写法都要匹配，别只按一种写。
+**Note**: Word **normalizes XML** on save (e.g. `<w:b />` → `<w:b/>`, attribute order changes). When verifying with string counts, match both spellings; don't write only one.
 
 ---
 
-## 路线 A：Word COM 插入（推荐）
+## Route A: Word COM Insertion (Recommended)
 
-Word 原生支持 EMF，矢量保真，**不用碰 OOXML**。
+Word natively supports EMF with vector fidelity, and you **don't have to touch OOXML**.
 
-**做法**：在文档里留占位符，画完图后批量替换。
+**Approach**: leave placeholders in the document, then batch-replace them after drawing the figures.
 
 ```markdown
 ... 系统工作模式见下图。
@@ -98,29 +92,29 @@ Word 原生支持 EMF，矢量保真，**不用碰 OOXML**。
 python scripts/word_insert.py 方案.docx --placeholder "{{FIG:N2}}" --image 图N2.emf
 ```
 
-脚本会：找到所有 `{{FIG:N2}}` → 清空占位符 → 在插入点插入图片 → 按正文栏宽设宽度 → 按 EMF 宽高比设高度 → 段落居中 → 更新域 → 另存。
+The script: finds all `{{FIG:N2}}` → clears the placeholder → inserts the picture at the insertion point → sets the width to the body column width → sets the height from the EMF aspect ratio → centers the paragraph → updates fields → saves as a new file.
 
-默认宽度 = **正文栏宽 − 5 mm**（`content_column_mm()` 自动算出，已计入装订线）。
+Default width = **body column width − 5 mm** (`content_column_mm()` computes it automatically, binding edge already accounted for).
 
-也可当库用：
+It can also be used as a library:
 
 ```python
 from word_insert import insert_at_placeholder
 insert_at_placeholder("in.docx", "{{FIG:N3}}", "图N3.emf", width_mm=170, out="out.docx")
 ```
 
-**优点**：不依赖文档生成方式；EMF 尺寸由 Word 自己解析；矢量不丢。
-**前提**：本机装了 Word。
+**Advantages**: independent of how the document was generated; EMF sizes are parsed by Word itself; vectors are not lost.
+**Prerequisite**: Word installed on this machine.
 
 ---
 
-## 路线 B：手工拼 OOXML
+## Route B: Hand-Built OOXML
 
-适用于「用脚本从零合成 docx」的场景（无 Word 或需要完全程序化）。
+For scenarios where a docx is composed from scratch by script (no Word, or fully programmatic).
 
-### B1. EMF 图幅要从文件头读
+### B1. Read the EMF Figure Extent from the File Header
 
-PIL **读不了 EMF**（会抛异常），`python-docx` 的 `add_picture` 内部用 PIL，所以**无法直接插入 EMF**。必须自己从 EMF 头取尺寸：
+PIL **cannot read EMF** (it throws an exception), and `python-docx`'s `add_picture` uses PIL internally, so you **cannot insert an EMF directly**. You must get the size from the EMF header yourself:
 
 ```python
 from docx_embed import emf_info
@@ -129,55 +123,51 @@ info = emf_info("图N2.emf")
 #  'ratio': 1.0302, 'implied_dpi': 117.2, ...}
 ```
 
-EMF 头结构（ENHMETAHEADER）：
+EMF header structure (ENHMETAHEADER):
 
-| 偏移 | 字段 | 说明 |
+| Offset | Field | Notes |
 |---|---|---|
-| 0 | `iType` | 恒为 1 |
-| 4 | `nSize` | 头长度 |
-| 8 | `rclBounds` | 4×int32，**设备单位（像素）** |
-| 24 | `rclFrame` | 4×int32，**单位 0.01 mm** |
-| 40 | `dSignature` | 应为 `" EMF"`（`0x464D4520`） |
+| 0 | `iType` | Always 1 |
+| 4 | `nSize` | Header length |
+| 8 | `rclBounds` | 4×int32, **device units (pixels)** |
+| 24 | `rclFrame` | 4×int32, **units of 0.01 mm** |
+| 40 | `dSignature` | Should be `" EMF"` (`0x464D4520`) |
 
-写入 `wp:extent` 时换算成 EMU：`cx = mm * 36000`。
+When writing `wp:extent`, convert to EMU: `cx = mm * 36000`.
 
-> ⚠ **EMF 的绝对物理尺寸不可靠**。实测 Visio 导出的 EMF，`rclFrame` 隐含约 **117 DPI**，
-> 而同一张图导出的 PNG 是 **96 DPI**（物理尺寸差约 22%）。
-> 但两者的**宽高比完全一致**（差异 < 0.1%）。
+> ⚠ **The absolute physical size of an EMF is unreliable**. In practice, EMF exported from Visio has an implied **~117 DPI** from `rclFrame`, while a PNG exported from the same figure is **96 DPI** (physical sizes differ by about 22%). But the **aspect ratios are exactly the same** (difference < 0.1%).
 >
-> **正确做法**：只取宽高比，宽度按正文栏宽显式指定，高度 = 宽度 × `ratio`。
-> 不要直接采信 `rclFrame` 的绝对值 —— 否则图会莫名缩小或放大。
-> `word_insert.py` 与 `docx_audit.py` 都是这么做的。
+> **Correct approach**: take only the aspect ratio, specify the width explicitly from the body column width, and set height = width × `ratio`. Do not trust the absolute value of `rclFrame` directly — otherwise the figure will shrink or grow for no apparent reason. `word_insert.py` and `docx_audit.py` both do it this way.
 
-### B2. 补 Content_Types 声明
+### B2. Add the Content_Types Declaration
 
 ```python
 from docx_embed import ensure_content_type
-ensure_content_type("方案.docx", "emf")     # 补 <Default Extension="emf" ContentType="image/x-emf"/>
+ensure_content_type("方案.docx", "emf")     # Adds <Default Extension="emf" ContentType="image/x-emf"/>
 ```
 
-### B3. 三个必踩的 OOXML 坑
+### B3. Three OOXML Pitfalls You Will Hit
 
-#### 坑 1：`<Default>` 必须写在 `<Types>` 内
+#### Pitfall 1: `<Default>` Must Be Written Inside `<Types>`
 
-`[Content_Types].xml` 只有一个根节点 `<Types>`。如果把 `<Default>` 插到 XML 声明之后、`<Types>` 之前，文件就有两个根级元素 —— Word 报**「文件已损坏」**。
+`[Content_Types].xml` has only one root node, `<Types>`. If you insert `<Default>` after the XML declaration but before `<Types>`, the file has two root-level elements — and Word reports **"file is corrupted"**.
 
 ```python
 m = re.search(r"<Types[^>]*>", ct)
-ct = ct[:m.end()] + decl + ct[m.end():]      # ✓ 插在 <Types> 开标签之后
+ct = ct[:m.end()] + decl + ct[m.end():]      # ✓ Insert after the <Types> opening tag
 ```
 
-#### 坑 2：`mc:Ignorable` 只能引用已声明的前缀
+#### Pitfall 2: `mc:Ignorable` May Only Reference Declared Prefixes
 
-根元素形如：
+The root element looks like:
 
 ```xml
 <w:document xmlns:w="..." xmlns:mc="..." mc:Ignorable="w14 wp14">
 ```
 
-如果用了 `ElementTree` 解析再序列化，**未被引用的命名空间声明会被丢掉**，但 `mc:Ignorable` 还留着 `w14` —— 违反 MCE 规范，Word 同样报**「文件已损坏」**。
+If you parse with `ElementTree` and serialize again, **unreferenced namespace declarations are dropped**, but `mc:Ignorable` still lists `w14` — violating the MCE spec, and Word again reports **"file is corrupted"**.
 
-修复：序列化后重新裁剪 `mc:Ignorable`，只保留仍声明了的前缀。
+Fix: after serializing, trim `mc:Ignorable` again, keeping only prefixes still declared.
 
 ```python
 head = s[:s.find(">", s.find("<" + root_tag)) + 1]
@@ -185,80 +175,76 @@ declared = set(re.findall(r'xmlns:([\w\d]+)="', head))
 keep = [p for p in ignorable.split() if p in declared]
 ```
 
-`docx_audit.py` 已内置这项检查，对 `document.xml` 与 `styles.xml` 都会查。
+`docx_audit.py` already has this check built in, for both `document.xml` and `styles.xml`.
 
-#### 坑 3：`w:tblW` / `w:tcW` 的属性名是 `w:w`，不是 `w:val`
+#### Pitfall 3: The Attribute Name for `w:tblW` / `w:tcW` Is `w:w`, Not `w:val`
 
 ```xml
 <w:tblW w:w="9921" w:type="dxa"/>     <!-- ✓ -->
 <w:tblW w:val="9921" w:type="dxa"/>   <!-- ✗ -->
 ```
 
-写成 `w:val` 时 Word 读到的 `PreferredWidth = 0`，**每一列塌缩到约 0.4 cm**（一行一个字），页数会从 32 页暴涨到 201 页。
+Written as `w:val`, Word reads `PreferredWidth = 0`, and **every column collapses to about 0.4 cm** (one character per line), ballooning the page count from 32 pages to 201.
 
-容易混淆的是 `w:gridCol` 用的确实是 `w:w`（这个是对的），所以不是所有宽度属性都写错 —— 只有 `tblW` / `tcW` 这两个容易顺手写成 `w:val`。
+What makes it confusing is that `w:gridCol` really does use `w:w` (that one is correct), so not every width attribute is written wrong — only `tblW` / `tcW` are easy to write as `w:val` by habit.
 
-`docx_audit.py` 已内置该检查。
+`docx_audit.py` already has this check built in.
 
 ---
 
-## 交付前自查
+## Pre-Delivery Self-Check
 
 ```bash
 python scripts/docx_audit.py 方案.docx
 ```
 
-静态部分（不需要 Word）会检查：
+The static part (no Word needed) checks:
 
-- 所有 XML 部件良构
-- `<Default>` 是否在 `<Types>` 内、`word/media` 的扩展名是否都已声明
-- `mc:Ignorable` 前缀一致性
-- `tblW` / `tcW` 属性名
-- 加粗 run 计数
-- 正文栏宽（含装订线）
+- All XML parts are well-formed
+- Whether `<Default>` is inside `<Types>`, and whether the extensions in `word/media` are all declared
+- `mc:Ignorable` prefix consistency
+- `tblW` / `tcW` attribute names
+- Bold run counts
+- Body column width (including binding edge)
 
-Word 实测部分会给出：页数、段落、表格数、**最宽表格 vs 栏宽**、每张图的尺寸、表格内外粗体段落数。
+The Word live-test part reports: page count, paragraph and table counts, **widest table vs. column width**, each figure's size, and bold paragraph counts inside and outside tables.
 
-判定口径：
-- 最宽表格 ≤ 正文栏宽 → 通过（差 0.05 cm 容差）
-- 表格内粗体 = 0 → 通过
-- 表格外粗体 = 标题段落数 → 正常（标题样式自带加粗）
+Decision criteria:
+- Widest table ≤ body column width → pass (0.05 cm tolerance)
+- Bold inside tables = 0 → pass
+- Bold outside tables = heading paragraph count → normal (heading styles are bold by themselves)
 
 ---
 
-### 图的版式验收（图幅 / 居中 / 目录页码）
+### Figure Layout Acceptance (Figure Extent / Centering / TOC Page Numbers)
 
-`docx_audit.py` 只看文本和表格，下面三项图特有的必须单独跑。三项都要在**导出 PDF 之后**做。
+`docx_audit.py` only looks at text and tables; the three figure-specific items below must be run separately. All three must be done **after exporting to PDF**.
 
-**① 图幅比例 —— 三方对照，别猜**
+**① Figure-extent ratio — three-way comparison, don't guess**
 
 ```python
-# 显示框（docx）、bounds（EMF 头）、vsdx 并集（设计真值）三者比对
-# 判据与决策树见 pitfalls.md §25
-dr = dw / dh                     # <wp:extent> 或 <v:shape style>，注意 in/pt/mm 单位（§26）
+# Compare three things: display box (docx), bounds (EMF header), vsdx union (design ground truth)
+# Criteria and decision tree: see pitfalls.md §25
+dr = dw / dh                     # <wp:extent> or <v:shape style>; mind in/pt/mm units (§26)
 br = (bd[2] - bd[0]) / (bd[3] - bd[1])   # struct.unpack('<4i', emf[8:24])
-vr = vsdx_union(path)            # PinX/PinY/Width/Height 并集，单位英寸
+vr = vsdx_union(path)            # PinX/PinY/Width/Height union, in inches
 ```
 
-判定：`|br/vr-1| ≤ 3%` 且 `|dr/vr-1| > 3%` → 显示框写错，改 `H = W / br`。
-出报告时把 `dr / br` 的偏差列全表，**>1.5% 的都要看**（本项目首轮 25 个恒 −48%，
-精修后 12 个残余 1.7%~3.4%，都收敛到 <1.5% 才算完）。
+Decision: `|br/vr-1| ≤ 3%` and `|dr/vr-1| > 3%` → the display box is written wrong; change to `H = W / br`. When reporting, list the `dr / br` deviation for the whole table; **anything >1.5% must be looked at** (first round on this project: 25 figures at a constant −48%; after fine-tuning, 12 remaining at 1.7%–3.4%; only counted as done once all converged to <1.5%).
 
-**② 水平居中 —— PDF 矢量路径法**
+**② Horizontal centering — PDF vector-path method**
 
 ```python
 rects = [d['rect'] for d in page.get_drawings()
-         if d['rect'].width > 0.5 and d['rect'].width <= COLW * 1.06]   # 排除 EMF 超大裁剪框
-# 按题注 y 区间取并集包围盒，与栏中心比对，偏差 ≤1pt
+         if d['rect'].width > 0.5 and d['rect'].width <= COLW * 1.06]   # Exclude oversized EMF clipping boxes
+# Take the union bounding box over the caption's y-range and compare against the column center; deviation ≤1pt
 ```
 
-★ 不要用 `Range.Information(5)`（对行内图形一律返回段落左边距）；也不要按「墨迹包围盒」
-切带（图内文字会被当成正文，导致假阳性）。细节见 `pitfalls.md` §28.1。
+★ Do not use `Range.Information(5)` (it always returns the paragraph's left margin for inline shapes); and do not slice bands by the "ink bounding box" (figure text gets treated as body text, causing false positives). See `pitfalls.md` §28.1 for details.
 
-**③ 目录 / 图表目录页码**
+**③ Table of contents / table of figures page numbers**
 
-改图尺寸必然改页数（本项目 204 → 201）。刷域之后**必须**重新导 PDF 逐条比对：
-目录条目的页码 vs 正文题注实际所在页。
+Changing figure sizes necessarily changes the page count (on this project, 204 → 201). After updating fields you **must** re-export the PDF and compare item by item: each TOC entry's page number vs. the page where the caption actually appears in the body.
 
 ```python
 doc.Fields.Update()
@@ -267,15 +253,14 @@ for i in range(1, doc.TablesOfFigures.Count + 1):    doc.TablesOfFigures(i).Upda
 doc.Repaginate(); doc.Save()
 ```
 
-页码要从**页脚块**读（`blocks` 中 `y0 > 页高-70` 的纯数字块），不能按 `get_text()` 行序取末尾
-（见 `pitfalls.md` §28.2）。
+Page numbers must be read from the **footer blocks** (pure-number blocks with `y0 > page height − 70` in `blocks`); don't take the last line from `get_text()` line order (see `pitfalls.md` §28.2).
 
-**导出 PDF 的姿势**
+**How to export the PDF**
 
 ```python
-shutil.copy2(docx, tmp)                        # 走临时副本，原文档不动
-doc = app.Documents.Open(os.path.abspath(tmp)) # ★ 必须 abspath，否则 Word 找 System32
+shutil.copy2(docx, tmp)                        # Work on a temp copy; the original document is untouched
+doc = app.Documents.Open(os.path.abspath(tmp)) # ★ Must be abspath, otherwise Word looks in System32
 doc.SaveAs2(os.path.abspath(pdf), 17)          # 17 = wdFormatPDF
 ```
 
-`ExportAsFixedFormat` 在部分环境**静默失败**（不报错、不产文件），优先用 `SaveAs2`。
+`ExportAsFixedFormat` **fails silently** in some environments (no error, no file produced); prefer `SaveAs2`.

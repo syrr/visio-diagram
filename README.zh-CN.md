@@ -27,7 +27,7 @@
 ## 安装
 
 ```bash
-git clone https://github.com/kkzi/visio-diagram.git
+git clone https://github.com/syrr/visio-diagram.git
 cd visio-diagram
 pip install pywin32 pillow
 ```
@@ -44,10 +44,10 @@ python -c "import sys; sys.path.insert(0,'scripts'); import visio_lib; visio_lib
 
 ```bash
 # WorkBuddy（用户级）
-git clone https://github.com/kkzi/visio-diagram.git ~/.workbuddy-ai/skills/visio-diagram
+git clone https://github.com/syrr/visio-diagram.git ~/.workbuddy-ai/skills/visio-diagram
 
 # Claude Code
-git clone https://github.com/kkzi/visio-diagram.git ~/.claude/skills/visio-diagram
+git clone https://github.com/syrr/visio-diagram.git ~/.claude/skills/visio-diagram
 ```
 
 触发技能的示例指令：
@@ -99,7 +99,7 @@ python scripts/selftest.py          # 22 项断言
 python scripts/doc_consistency.py  # 文档-代码一致性
 ```
 
-完整参考见 [SKILL.md](SKILL.md) 与 [references/](references/)。
+完整参考见 [SKILL.zh-CN.md](SKILL.zh-CN.md) 与 [references/](references/)。
 
 
 ## 跨平台 XML 后端（不需要 Visio）
@@ -112,7 +112,7 @@ python scripts/xml_backend/build_vsdx.py assets/example_xml_flowchart.py out/
 python -m unittest discover -s tests -v   # 不需要 Visio
 ```
 
-详见 [references/cross-platform.md](references/cross-platform.md)。
+详见 [references/cross-platform.zh-CN.md](references/cross-platform.zh-CN.md)。
 
 ## 已知限制
 
