@@ -2,118 +2,75 @@
 
 [中文文档 (Chinese)](README.zh-CN.md)
 
-Programmatic vector diagram generation and Word embedding for engineering documents, with full CJK / Chinese support, driven by the local Visio installation via COM.
+Draw editable Visio diagrams with code, and embed them in Word — instead of dragging shapes by hand.
 
-Each figure is exported as `.vsdx` (natively editable), `.emf` (vector for Word / PowerPoint) and `.png` (preview).
+Each figure comes out as `.vsdx` (natively editable in Visio), `.emf` (vector, for Word / PowerPoint), and `.png` (preview).
 
-## Capabilities
+## Why use it
 
-- Precise layout control: rectangles, ovals / interface circles, text blocks, titled boxes, swimlanes, legends, horizontal / vertical arrows
-- Single-shape connectors glued to connection points — straight, polyline, or smoothed curves (`smooth=`), endpoints follow when boxes move
-- Connector-carried labels positioned along the line (`label_at` / `label_gap` / `label_side`)
-- Text overflow self-check before export (font-metrics based line-wrap estimation)
-- Arrow alignment audit: flags endpoints that land off the edge midpoint; qualified offsets can be whitelisted
-- Automatic text merging into host shapes before save (≈47% fewer shapes, pixel-identical layout)
-- Word embedding: placeholder replacement (EMF), raw OOXML assembly, in-place OLE conversion (double-click to edit in Visio), or replacing an existing OLE figure in place (`replace_ole.py`)
-- Document QA: static OOXML checks, Word layout measurement, regression suite, docs-vs-code consistency check
+- **Diagrams stay editable:** connectors are glued to connection points, so endpoints follow when you move a box. No more redrawing arrows by hand.
+- **It checks itself:** text-overflow self-check and arrow-alignment audit catch layout mistakes before export.
+- **Word-ready:** embed by placeholder, or as a double-click-to-edit Visio OLE object.
+- **Works without Visio too:** the XML backend generates the same editable `.vsdx` on Linux / macOS / Windows, with only Python and Pillow.
 
-## Requirements
-
-- Windows with desktop Visio installed
-- Python 3.9 – 3.13
-- `pywin32`, `Pillow`
-- A CJK font (default: Microsoft YaHei)
-
-## Installation
+## Quick install
 
 ```bash
 git clone https://github.com/syrr/visio-diagram.git
 cd visio-diagram
-pip install pywin32 pillow
+pip install pywin32 pillow   # pywin32 only needed on Windows with Visio
 ```
 
-Verify the environment:
+No Visio? Just `pip install pillow` — the XML backend needs nothing else.
 
-```bash
-python -c "import sys; sys.path.insert(0,'scripts'); import visio_lib; visio_lib.check_env()"
-```
+## Quick use
 
-## Install as an LLM agent skill
-
-The repo is a standard skill package (`SKILL.md` + `scripts/` + `references/`). Clone it into any agent's skill directory and the agent can drive the full workflow autonomously:
-
-```bash
-# WorkBuddy (user-level)
-git clone https://github.com/syrr/visio-diagram.git ~/.workbuddy-ai/skills/visio-diagram
-
-# Claude Code
-git clone https://github.com/syrr/visio-diagram.git ~/.claude/skills/visio-diagram
-```
-
-Example prompt that triggers the skill:
-
-```
-Use Visio to draw a three-swimlane system architecture diagram, sized 1:1 to the document column width, run the self-check, then embed it in the proposal docx
-```
-
-The agent then runs the workflow itself: environment check → column-width measurement → drawing script → overflow self-check → alignment audit → export and Word embedding. The host machine needs the same requirements as above; the agent only needs shell access.
-
-## Usage
+With Visio (Windows):
 
 ```python
 import sys
 sys.path.insert(0, "scripts")
 from visio_lib import VDraw
 
-with VDraw(150, 108, theme="tech-cn") as d:      # canvas in mm, top-left origin, Y down
+with VDraw(150, 108) as d:      # canvas in mm, top-left origin
     d.lane(0, 0, 150, 74, "Processing chain")
     d.step_box(6, 12, 42, 26, "① Step 1", "Description")
     d.h_arrow(48, 25, 60)
-    d.check()                                     # text overflow self-check
-    d.export_all("out/Fig N1")                    # writes .vsdx / .emf / .png
+    d.check()                   # text-overflow self-check
+    d.export_all("out/Fig N1")  # writes .vsdx / .emf / .png
 ```
 
-Embed a figure into Word by placeholder:
+Embed the figure in Word:
 
 ```bash
 python scripts/word_insert.py proposal.docx --placeholder "{{FIG:N2}}" --image "Fig N2.emf"
 ```
 
-Audit connector alignment (supports a whitelist for intentional offsets):
+Without Visio (any platform):
 
 ```bash
-python scripts/audit_align.py figures/*.vsdx
-python scripts/audit_align.py --add "figures/Fig N8….vsdx"    # whitelist reported offsets
-```
-
-Run the regression suite after any engine change:
-
-```bash
-python scripts/selftest.py          # 22 assertions
-python scripts/doc_consistency.py  # docs-vs-code consistency
-```
-
-Full reference: [SKILL.md](SKILL.md) and [references/](references/).
-
-
-## Cross-platform XML backend (no Visio required)
-
-`scripts/xml_backend/` writes Visio page XML directly and packages it as `.vsdx`, so figures can be generated on Linux / macOS / Windows without Visio or pywin32. Output stays natively editable: connection points, glued endpoints and connector-carried text follow the Visio schema. Word previews are high-DPI PNG instead of EMF; on Windows with Visio, `visio_finish.py` can optionally verify the drawings (cached values, glue, automated drag test), recalculate, export EMF and re-save.
-
-```
-pip install pillow
 python scripts/xml_backend/build_vsdx.py assets/example_xml_flowchart.py out/
-python -m unittest discover -s tests -v   # no Visio needed
 ```
 
-See [references/cross-platform.md](references/cross-platform.md).
+## Use it as an LLM agent skill
 
-## Known Limitations
+Clone it into your agent's skill directory and just ask for a diagram in plain language:
 
-1. Free-end connectors (legend lines, ticks, bus stubs) show a selection bounding box; graphical correctness is prioritized.
-2. Automatic text merging is heuristic; use explicit `label=` for precise control.
-3. Requires local Visio, pywin32 and CJK fonts — not portable to machines without them.
-4. COM sessions must be closed; use `with VDraw(...)` so `VISIO.EXE` never leaks.
+```bash
+git clone https://github.com/syrr/visio-diagram.git ~/.claude/skills/visio-diagram
+```
+
+```
+Use Visio to draw a three-swimlane system architecture diagram, sized 1:1 to the document column width, run the self-check, then embed it in the proposal docx
+```
+
+The agent handles the rest: environment check, column-width measurement, drawing, self-check, alignment audit, export, and Word embedding.
+
+## Learn more
+
+Full reference: [SKILL.md](SKILL.md) and [references/](references/) — including the cross-platform XML backend ([cross-platform.md](references/cross-platform.md)) and the pitfalls list ([pitfalls.md](references/pitfalls.md)).
+
+Requirements: Windows + desktop Visio, Python 3.9–3.13, `pywin32`, `Pillow`, and a CJK font (default: Microsoft YaHei) for the COM route.
 
 ## License
 

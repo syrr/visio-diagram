@@ -2,124 +2,75 @@
 
 [English](README.md)
 
-通过 COM 驱动本机 Visio，程序化生成矢量图并嵌入 Word 文档，面向中文工程技术文档配图。
+用代码画可编辑的 Visio 图，并嵌进 Word —— 不用再手动拖形状。
 
 每张图导出三件套：`.vsdx`（原生可编辑）· `.emf`（矢量，供 Word / PPT）· `.png`（预览）。
 
-## 能力范围
+## 为什么用它
 
-- 精确版式控制：矩形、椭圆 / 接口编号圈、文本块、标题方块、泳道、图例、水平 / 垂直箭头
-- 单条连接线胶到连接点：直线 / 折线 / 平滑曲线（`smooth=`）—— 挪框时端点跟随
-- 连接线自带标签，沿线相对定位（`label_at` / `label_gap` / `label_side`）
-- 出图前文字溢出自检（基于字体度量的折行估算）
-- 箭头对齐审计：报出偏离边中点的端点；已定性的刻意偏移可登记白名单
-- 保存前自动把文本框并入宿主形状（形状数省约 47%，版式逐像素不变）
-- 嵌入 Word：占位符替换（EMF）/ 手拼 OOXML / 原地换 OLE（双击进 Visio 改图）/ 替换文档里已有的 OLE 图（`replace_ole.py`）
-- 文档自检：静态 OOXML 检查、Word 版式实测、回归测试、文档-代码一致性检查
+- **图一直可编辑：** 连接线胶在连接点上，挪框时端点跟随，不用再手动重画箭头。
+- **自动自检：** 出图前做文字溢出自检和箭头对齐审计，提前发现版式问题。
+- **Word 就绪：** 按占位符嵌入，或嵌成双击可进 Visio 改图的 OLE 对象。
+- **不装 Visio 也能用：** XML 后端在 Linux / macOS / Windows 上生成同样的可编辑 `.vsdx`，只需 Python 和 Pillow。
 
-## 环境要求
-
-- Windows + 桌面版 Visio
-- Python 3.9 – 3.13
-- `pywin32`、`Pillow`
-- 中文字体（默认微软雅黑）
-
-## 安装
+## 快速安装
 
 ```bash
 git clone https://github.com/syrr/visio-diagram.git
 cd visio-diagram
-pip install pywin32 pillow
+pip install pywin32 pillow   # 只有 Windows + Visio 才需要 pywin32
 ```
 
-环境自检：
+没装 Visio？只需 `pip install pillow`，XML 后端不需要别的。
 
-```bash
-python -c "import sys; sys.path.insert(0,'scripts'); import visio_lib; visio_lib.check_env()"
-```
+## 快速上手
 
-## 作为 LLM agent 技能安装
-
-本仓库即标准技能包（`SKILL.md` + `scripts/` + `references/`）。克隆到 agent 的技能目录后，agent 即可自主驱动完整工作流：
-
-```bash
-# WorkBuddy（用户级）
-git clone https://github.com/syrr/visio-diagram.git ~/.workbuddy-ai/skills/visio-diagram
-
-# Claude Code
-git clone https://github.com/syrr/visio-diagram.git ~/.claude/skills/visio-diagram
-```
-
-触发技能的示例指令：
-
-```
-用 Visio 画一张三泳道的系统架构图，按文档栏宽 1:1 出图，自检后嵌到方案 docx 里
-```
-
-agent 会自行完成：环境检查 → 量栏宽 → 写绘图脚本 → 溢出自检 → 对齐审计 → 出图并嵌入 Word。宿主机环境要求同上；agent 只需能执行 shell 命令。
-
-## 使用
+有 Visio（Windows）：
 
 ```python
 import sys
 sys.path.insert(0, "scripts")
 from visio_lib import VDraw
 
-with VDraw(150, 108, theme="tech-cn") as d:      # 画布 mm，左上原点、Y 向下
+with VDraw(150, 108) as d:      # 画布 mm，左上原点
     d.lane(0, 0, 150, 74, "处理链路")
     d.step_box(6, 12, 42, 26, "① 环节一", "说明文字")
     d.h_arrow(48, 25, 60)
-    d.check()                                     # 文字溢出自检
-    d.export_all("out/图N1")                      # 导出 .vsdx / .emf / .png
+    d.check()                   # 文字溢出自检
+    d.export_all("out/图N1")    # 导出 .vsdx / .emf / .png
 ```
 
-按占位符把图嵌入 Word：
+把图嵌进 Word：
 
 ```bash
 python scripts/word_insert.py 方案.docx --placeholder "{{FIG:N2}}" --image 图N2.emf
 ```
 
-连接线对齐审计（支持把已定性偏移登记白名单）：
+没装 Visio（任意平台）：
 
 ```bash
-python scripts/audit_align.py 图表素材/*.vsdx
-python scripts/audit_align.py --add 图表素材/图N8….vsdx    # 登记本次报出的偏移
-```
-
-替换文档里**已有**的 Visio OLE 图（返修场景，vsdx + 缓存 EMF + 显示框一起换）：
-
-```bash
-python scripts/replace_ole.py 方案.docx 图表素材/图N2.emf 图表素材/图N2.vsdx
-```
-
-改完引擎先跑回归：
-
-```bash
-python scripts/selftest.py          # 22 项断言
-python scripts/doc_consistency.py  # 文档-代码一致性
-```
-
-完整参考见 [SKILL.zh-CN.md](SKILL.zh-CN.md) 与 [references/](references/)。
-
-
-## 跨平台 XML 后端（不需要 Visio）
-
-`scripts/xml_backend/` 直接生成 Visio 页面 XML 并打包为 `.vsdx`，在 Linux / macOS / Windows 上都能出图，不需要 Visio 和 pywin32。产物仍可在 Visio 中原生编辑：连接点、端点粘附、连线自带文本都按 Visio 规范写入。Word 预览为高 DPI PNG；有 Windows + Visio 时，可用 `visio_finish.py` 做可选的验证与收尾（缓存值、粘附、自动拖动测试、重算、导出 EMF、另存）。
-
-```
-pip install pillow
 python scripts/xml_backend/build_vsdx.py assets/example_xml_flowchart.py out/
-python -m unittest discover -s tests -v   # 不需要 Visio
 ```
 
-详见 [references/cross-platform.zh-CN.md](references/cross-platform.zh-CN.md)。
+## 作为 LLM agent 技能
 
-## 已知限制
+克隆到 agent 的技能目录，然后用一句话要图就行：
 
-1. 自由端连接线（图例线 / 刻度 / 总线引出）选中时仍显示包围盒；本库取「图形正确优先」。
-2. 自动文字并入是启发式；要精确控制请用显式 `label=`。
-3. 依赖本机 Visio、pywin32 与中文字体 —— 无法在缺少这些依赖的机器上使用。
-4. COM 会话必须收尾；用 `with VDraw(...)` 即可保证不残留 `VISIO.EXE`。
+```bash
+git clone https://github.com/syrr/visio-diagram.git ~/.claude/skills/visio-diagram
+```
+
+```
+用 Visio 画一张三泳道的系统架构图，按文档栏宽 1:1 出图，自检后嵌到方案 docx 里
+```
+
+剩下的 agent 自己做：环境检查、量栏宽、写绘图脚本、溢出自检、对齐审计、出图并嵌入 Word。
+
+## 了解更多
+
+完整参考见 [SKILL.zh-CN.md](SKILL.zh-CN.md) 与 [references/](references/)，包括跨平台 XML 后端（[cross-platform.zh-CN.md](references/cross-platform.zh-CN.md)）和避坑清单（[pitfalls.zh-CN.md](references/pitfalls.zh-CN.md)）。
+
+环境要求：COM 路线需要 Windows + 桌面版 Visio、Python 3.9–3.13、`pywin32`、`Pillow` 和中文字体（默认微软雅黑）。
 
 ## 许可证
 
